@@ -42,6 +42,16 @@ def test_seed_is_idempotent(session: OrmSession, principal) -> None:  # noqa: AN
     assert second["ticket"] is not None
 
 
+def test_demo_ticket_is_inside_the_demo_session(session: OrmSession, principal) -> None:  # noqa: ANN001
+    """La sesión de demo tiene que tener el ticket adentro. Vacía miente."""
+    from app.sessions import service as sessions_service
+
+    seed(session, principal)
+    context = sessions_service.join_session(session, principal, "PLN-001")
+    assert context.ok
+    assert [t["code"] for t in context.data["tickets"]] == ["OS-001"]
+
+
 def test_demo_ticket_is_findable_by_search(session: OrmSession, principal) -> None:  # noqa: ANN001
     from app.tickets import repository as repo
 

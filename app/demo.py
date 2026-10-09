@@ -81,16 +81,25 @@ def seed(db: Any, principal: Principal) -> dict[str, Any]:  # noqa: ANN401
         db.flush()
         created["project"] = True
 
-    result = tickets.create_ticket(db, principal, demo_draft())
+    # La sesión va PRIMERO: si el ticket se crea después sin session=, la sesión
+    # queda vacía y el primero que abre la web ve un board sin nada dentro.
+    session = sessions.start_session(db, principal, DEMO_PROJECT, DEMO_SESSION_TITLE, DEMO_SESSION_GOAL)
+    session_code = str(session.data["code"]) if session.ok else None
+    if session_code:
+        created["session"] = session_code
+
+    draft = demo_draft()
+    if session_code:
+        draft = draft.model_copy(update={"session": session_code})
+
+    result = tickets.create_ticket(db, principal, draft)
     if not result.ok:
         logger.warning("No se pudo crear el ticket de demo: %s", result.violations[0].message)
         return created
     code = str(result.data["code"])
     created["ticket"] = code
 
-    session = sessions.start_session(db, principal, DEMO_PROJECT, DEMO_SESSION_TITLE, DEMO_SESSION_GOAL)
-    if session.ok:
-        session_code = str(session.data["code"])
+    if session_code:
         sessions.join_session(db, principal, session_code)
         sessions.join_session(db, principal, session_code, role="observer")
         tickets.add_comment(
@@ -100,5 +109,4 @@ def seed(db: Any, principal: Principal) -> dict[str, Any]:  # noqa: ANN401
             "Este es un ticket de ejemplo. Leelo: muestra el nivel de detalle que OpenSupport exige. "
             "Podés borrarlo con `set_status` cuando quieras.",
         )
-        created["session"] = session_code
     return created
