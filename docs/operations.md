@@ -70,7 +70,7 @@ Si un cliente no conecta, revisá en este orden:
 2. **401** → token inexistente, revocado, o el header no viaja. Va como
    `Authorization: Bearer os_...`.
 3. **Sin `Accept: text/event-stream`** → el transporte responde 406. Algunos clientes
-   lo协商 mal; FastMCP y el inspector lo hacen bien.
+   lonegocian mal; FastMCP y el inspector lo hacen bien.
 
 ## Backups
 
