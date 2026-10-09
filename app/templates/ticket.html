@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ ticket.code }} — OpenSupport{% endblock %}
+{% block content %}
+<article class="ticket">
+  <header class="ticket-head">
+    <a class="back" href="/">← board</a>
+    <h1><code>{{ ticket.code }}</code> {{ ticket.title }}</h1>
+    <div class="meta">
+      <span class="pill s-{{ ticket.status }}">{{ ticket.status }}</span>
+      <span class="tag">{{ ticket.type }}</span>
+      <span class="tag">{{ ticket.priority }}</span>
+      <span class="tag">proyecto: {{ ticket.project.slug }}</span>
+      {% if ticket.session %}<span class="tag">sesión: <a href="/s/{{ ticket.session.code }}">{{ ticket.session.code }}</a></span>{% endif %}
+      {% if ticket.external_key %}<span class="tag mono">key: {{ ticket.external_key }}</span>{% endif %}
+    </div>
+  </header>
+
+  {% if request.query_params.get('msg') %}
+  <p class="error">{{ request.query_params.get('msg') }}</p>
+  {% endif %}
+
+  <section><h2>Resumen</h2><p>{{ ticket.summary | md }}</p></section>
+  {% if ticket.problem %}<section><h2>Problema</h2><p>{{ ticket.problem | md }}</p></section>{% endif %}
+  <section><h2>Resultado esperado</h2><p>{{ ticket.outcome | md }}</p></section>
+
+  <section>
+    <h2>Evidencia</h2>
+    <ul class="evidence">
+      {% for e in ticket.evidence %}
+      <li><code>{{ e.path }}{% if e.lines %}:{{ e.lines }}{% endif %}</code>{% if e.note %} — {{ e.note }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section><h2>Pasos</h2><ol>{% for s in ticket.steps %}<li>{{ s }}</li>{% endfor %}</ol></section>
+
+  <section><h2>Criterios de aceptación</h2>
+    <ul class="acceptance">{% for a in ticket.acceptance %}<li>{{ a }}</li>{% endfor %}</ul>
+  </section>
+
+  <section><h2>Scope</h2>
+    <div class="scope">
+      <div><h3>Entra</h3><ul>{% for i in ticket.scope.get('include', []) %}<li>{{ i }}</li>{% endfor %}</ul></div>
+      <div><h3>Queda afuera</h3><ul>{% for e in ticket.scope.get('exclude', []) %}<li>{{ e }}</li>{% endfor %}</ul></div>
+    </div>
+  </section>
+
+  {% if ticket.risks %}
+  <section><h2>Riesgos</h2><ul>{% for r in ticket.risks %}<li>{{ r }}</li>{% endfor %}</ul></section>
+  {% endif %}
+
+  {% if ticket.verification %}
+  <section><h2>Verificación</h2>
+    <pre>{{ ticket.verification }}</pre>
+  </section>
+  {% endif %}
+
+  <section class="review-box">
+    <h2>Revisión</h2>
+    <p class="muted">La revisión no cambia el estado: informa si alguien lo miró.</p>
+    {% if review.needs_review %}<p class="stale">Sin revisar desde el último cambio.</p>{% endif %}
+    <ul class="reviews">
+      {% for r in review.current_verdicts %}
+      <li><strong>{{ r.verdict }}</strong>{% if r.note %} — {{ r.note }}{% endif %} <span class="muted">{{ r.created_at.strftime('%d/%m %H:%M') }}</span></li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/t/{{ ticket.code }}/review" class="review-form">
+      <button name="verdict" value="approved" class="ok">Apruebo</button>
+      <input type="text" name="note" placeholder="si pedís cambios, explicá cuáles">
+      <button name="verdict" value="changes_requested" class="warn">Pido cambios</button>
+    </form>
+    {% if review.historical %}
+    <details><summary>Histórico ({{ review.historical_count }})</summary>
+      <ul>{% for r in review.historical %}<li class="muted">{{ r.verdict }} — {{ r.note or '' }} <em>sobre versión anterior</em></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="status-bar">
+    <h2>Estado</h2>
+    <form method="post" action="/t/{{ ticket.code }}/status" class="inline">
+      {% for s in ['ready','in_progress','blocked','open','wont'] %}
+      <button name="status" value="{{ s }}">{{ s }}</button>
+      {% endfor %}
+    </form>
+    <p class="muted">Para cerrar usá <code>close_ticket</code> desde el agente: exige PR o commit y un comando de verificación.</p>
+  </section>
+
+  <section><h2>Comentarios</h2>
+    <ul class="comments">
+      {% for c in comments %}
+      <li><strong>{{ c.author_user.name if c.author_user else (c.author_agent.name if c.author_agent else '?') }}</strong>: {{ c.body }}</li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/t/{{ ticket.code }}/comment" class="inline">
+      <input type="text" name="body" placeholder="dejá un comentario…" required>
+      <button>Enviar</button>
+    </form>
+  </section>
+
+  <section><h2>Historial</h2>
+    <ul class="events">
+      {% for e in events %}
+      <li><code>{{ e.kind }}</code> <span class="muted">{{ e.created_at.strftime('%d/%m %H:%M') }}</span> {{ e.payload }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+</article>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Sesiones de planificación</h1>
+<p class="muted">Un contexto compartido donde personas y agentes aportan tickets sobre el mismo tema.</p>
+<table class="board">
+  <thead><tr><th>Código</th><th>Título</th><th>Objetivo</th><th>Proyecto</th><th>Estado</th></tr></thead>
+  <tbody>
+  {% for s in sessions %}
+    <tr>
+      <td><a href="/s/{{ s.code }}"><code>{{ s.code }}</code></a></td>
+      <td>{{ s.title }}</td>
+      <td class="muted">{{ s.goal }}</td>
+      <td>{{ s.project }}</td>
+      <td><span class="pill s-{{ s.status }}">{{ s.status }}</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if not sessions %}<p class="muted">No hay sesiones todavía. Creá una con <code>start_session</code> desde un agente.</p>{% endif %}
+{% endblock %}

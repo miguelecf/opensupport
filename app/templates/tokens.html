@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Tokens de agente</h1>
+{% if request.query_params.get('new') %}
+<div class="notice">
+  <strong>Copiá este token ahora — no se vuelve a mostrar:</strong>
+  <pre class="token">{{ request.query_params.get('new') }}</pre>
+</div>
+{% endif %}
+<table class="board">
+  <thead><tr><th>Nombre</th><th>Agente</th><th>Proyectos</th><th>Scopes</th><th>Creado</th><th></th></tr></thead>
+  <tbody>
+  {% for t in tokens %}
+    <tr>
+      <td>{{ t.name }}</td>
+      <td>{{ t.agent.name if t.agent else '—' }}</td>
+      <td>{{ t.project_scope | join(', ') if t.project_scope else 'todos' }}</td>
+      <td><code>{{ t.scopes | join(' ') }}</code></td>
+      <td class="muted">{{ t.created_at.strftime('%d/%m %H:%M') }}</td>
+      <td>
+        <form method="post" action="/settings/tokens/{{ t.id }}/revoke" class="inline">
+          <button class="warn">revocar</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Crear token</h2>
+<form method="post" action="/settings/tokens" class="stack">
+  <label>Nombre del token <input type="text" name="name" required></label>
+  <label>Nombre del agente <input type="text" name="agent_name" placeholder="claude-code-fede"></label>
+  <label>Cliente
+    <select name="client">
+      <option value="claude_code">claude_code</option>
+      <option value="codex">codex</option>
+      <option value="opencode">opencode</option>
+      <option value="other" selected>other</option>
+    </select>
+  </label>
+  <label>Proyectos (separados por coma; vacío = todos)
+    <input type="text" name="projects" placeholder="mi-tesis, otro-side">
+  </label>
+  <button type="submit">Crear token</button>
+</form>
+{% endblock %}

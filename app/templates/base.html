@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}OpenSupport{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">OpenSupport</a>
+    <nav>
+      <a href="/">Board</a>
+      <a href="/sessions">Sesiones</a>
+      <a href="/settings/tokens">Tokens</a>
+      <a href="/settings/projects">Proyectos</a>
+    </nav>
+    <div class="who">
+      {% if user %}{{ user.name }}
+      <form method="post" action="/logout" class="inline"><button class="link">salir</button></form>
+      {% endif %}
+    </div>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

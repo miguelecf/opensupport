@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Board</h1>
+<form class="filters" method="get" action="/"
+      hx-get="/_ui/board" hx-target="#board" hx-trigger="change, submit, every 20s">
+  <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="buscar texto…">
+  <select name="status">
+    <option value="">cualquier estado</option>
+    {% for s in ['ready','in_progress','blocked','open','done','wont'] %}
+    <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <select name="project">
+    <option value="">cualquier proyecto</option>
+    {% for p in projects %}<option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+  </select>
+  <input type="text" name="owner" value="{{ filters.owner or '' }}" placeholder="responsable" size="12">
+  <input type="text" name="tag" value="{{ filters.tag or '' }}" placeholder="tag" size="10">
+  <label class="check"><input type="checkbox" name="needs_review" value="true"
+    {% if filters.needs_review %}checked{% endif %}> sin revisar</label>
+  <button type="submit">Filtrar</button>
+</form>
+<div id="board">
+  {% include "partials/_board.html" %}
+</div>
+{% endblock %}

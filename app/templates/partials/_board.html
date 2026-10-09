@@ -1,0 +1,30 @@
+{% if items %}
+<table class="board">
+  <thead><tr>
+    <th>Código</th><th>Título</th><th>Estado</th><th>Tipo</th><th>Prioridad</th>
+    <th>Proyecto</th><th>Sesión</th><th>Responsable</th><th>Revisión</th><th>Actualizado</th>
+  </tr></thead>
+  <tbody>
+  {% for t in items %}
+    <tr>
+      <td><a href="/t/{{ t.code }}"><code>{{ t.code }}</code></a></td>
+      <td>{{ t.title }}{% if t.fragment %}<div class="frag">{{ t.fragment | safe }}</div>{% endif %}</td>
+      <td><span class="pill s-{{ t.status }}">{{ t.status }}</span></td>
+      <td>{{ t.type }}</td>
+      <td>{{ t.priority }}</td>
+      <td>{{ t.project }}</td>
+      <td>{% if t.session %}<a href="/s/{{ t.session }}">{{ t.session }}</a>{% else %}—{% endif %}</td>
+      <td>{{ t.owner }}</td>
+      <td>
+        {% if t.review.needs_review %}<span class="rev stale" title="Sin revisar desde el último cambio">sin revisar</span>
+        {% elif t.review.changes_requested %}<span class="rev warn">!{{ t.review.changes_requested }}</span>
+        {% else %}<span class="rev ok">✓{{ t.review.approvals }}</span>{% endif %}
+      </td>
+      <td class="muted">{{ t.updated_at.strftime('%d/%m %H:%M') if t.updated_at else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No hay tickets que coincidan con el filtro.</p>
+{% endif %}

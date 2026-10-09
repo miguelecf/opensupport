@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+startCommand = "uv run opensupport serve --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/readyz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+# SQLite serializa escritores: una sola réplica, siempre.
+numReplicas = 1

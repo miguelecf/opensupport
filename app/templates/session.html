@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ ctx.code }} — OpenSupport{% endblock %}
+{% block content %}
+<h1><code>{{ ctx.code }}</code> {{ ctx.title }}</h1>
+<p><strong>Objetivo:</strong> {{ ctx.goal }}</p>
+<p><span class="pill s-{{ ctx.status }}">{{ ctx.status }}</span>
+  {% if ctx.read_only %}<span class="muted"> (solo lectura)</span>{% endif %}</p>
+
+<h2>Participantes</h2>
+<ul>{% for p in ctx.participants %}<li>{{ p.kind }} #{{ p.id }} — {{ p.role }}</li>{% endfor %}</ul>
+
+<h2>Tickets de la sesión</h2>
+{% if ctx.tickets %}
+<ul>{% for t in ctx.tickets %}
+  <li><a href="/t/{{ t.code }}"><code>{{ t.code }}</code></a> [{{ t.status }}] {{ t.title }}</li>
+{% endfor %}</ul>
+{% else %}
+<p class="muted">Todavía no hay tickets. Un agente puede aportar con <code>create_tickets_batch(session="{{ ctx.code }}")</code>.</p>
+{% endif %}
+{% endblock %}
