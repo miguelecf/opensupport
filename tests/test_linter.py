@@ -92,6 +92,11 @@ def test_title_border(title: str, length: int) -> None:
         # Tampoco estos: sustantivos, no verbos.
         ("Refactorizacion del modulo de autenticacion completo.", True),
         ("Prueba de integracion contra la base real.", True),
+        # Verbos cortos e irregulares: el filtro por longitud los dejaba fuera.
+        ("Leer el ticket de nuevo y comparar el codigo.", False),
+        ("Ver que el recurso del skill responde.", False),
+        ("Hacer un backup antes de tocar el esquema.", False),
+        ("Seguir la cadena de errores hasta la causa raiz.", False),
     ],
 )
 def test_step_verb_detected(step: str, expected: bool) -> None:

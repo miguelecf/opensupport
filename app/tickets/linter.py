@@ -158,6 +158,16 @@ ENGLISH_STEP_WORDS = frozenset(
     }
 )
 
+#: Verbos cortos o irregulares que el sufijo -ar/-er/-ir no cubre: "leer" es un
+#: verbo de acción y son 4 letras, así que el filtro por longitud lo dejaba fuera.
+IRREGULAR_SPANISH_VERBS = frozenset(
+    {
+        "leer", "ver", "dar", "ir", "hacer", "decir", "querer", "poder", "saber",
+        "tener", "venir", "salir", "seguir", "poner", "traer", "caer", "estar",
+        "ser", "haber", "oler", "reír", "reir", "soler", "dormir", "abrir",
+    }
+)
+
 VAGUE_MIN_LENGTH = 60
 
 
@@ -279,6 +289,8 @@ def _is_action_verb(word: str) -> bool:
     legítimos que usan un verbo no contemplado, y eso traba el loop del agente.
     """
     if word in STEP_VERBS or word in ENGLISH_STEP_WORDS:
+        return True
+    if word in IRREGULAR_SPANISH_VERBS:
         return True
     return len(word) > 4 and word.endswith(SPANISH_VERB_SUFFIXES)
 

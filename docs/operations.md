@@ -17,6 +17,23 @@ Variables de entorno (prefijo `OPENSUPPORT_`):
 | `SECRET_KEY` | valor de desarrollo | Firma de la cookie de sesión. **Cambiala en producción.** |
 | `MCP_REQUIRED_TOKENS` | `true` | Si es `false`, `/mcp` queda abierto. No lo hagas en producción. |
 
+## Docker
+
+```bash
+docker build -t opensupport .
+docker run -p 8000:8000 \
+  -e OPENSUPPORT_SECRET_KEY=<una larga, generada> \
+  -v opensupport_data:/data opensupport
+```
+
+Dos cosas que el Dockerfile resuelve y que son fáciles de romper al tocarlo:
+
+1. **`uv sync` va antes de copiar `app/`, con `--no-install-project`.** Si se instala
+   el proyecto antes de que exista el código, el paquete se instala vacío y el
+   contenedor muere con `ModuleNotFoundError: No module named 'app'`.
+2. **El `CMD` llama al binario del venv directamente**, no `uv run`. `uv` quiere
+   escribir en su cache del `$HOME` y el usuario no-root no puede.
+
 ## Railway
 
 ```toml
