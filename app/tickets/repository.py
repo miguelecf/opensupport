@@ -25,8 +25,31 @@ def get_project_by_slug(db: OrmSession, slug: str) -> Project | None:
     return db.scalar(select(Project).where(Project.slug == slug))
 
 
-def get_ticket_by_code(db: OrmSession, code: str) -> Ticket | None:
-    return db.scalar(select(Ticket).where(Ticket.code == code.upper()))
+def get_ticket_by_code(db: OrmSession, code: str, project: str | None = None) -> Ticket | None:
+    """Busca un ticket por código, acotando a un proyecto si se pasa.
+
+    El código es único por proyecto, no global: sin `project` y con más de una
+    coincidencia devolvemos None, y la capa web avisa en vez de mostrar el
+    ticket del proyecto equivocado.
+    """
+    stmt = select(Ticket).where(Ticket.code == code.upper())
+    if project is not None:
+        stmt = stmt.join(Project).where(Project.slug == project)
+        return db.scalar(stmt)
+    rows = list(db.scalars(stmt))
+    return rows[0] if len(rows) == 1 else None
+
+
+def projects_for_ticket_code(db: OrmSession, code: str) -> list[str]:
+    """Slugs de los proyectos que tienen un ticket con este código."""
+    return list(
+        db.scalars(
+            select(Project.slug)
+            .join(Ticket, Ticket.project_id == Project.id)
+            .where(Ticket.code == code.upper())
+            .order_by(Project.slug)
+        )
+    )
 
 
 def get_ticket_by_external_key(
@@ -63,8 +86,32 @@ def next_session_code(db: OrmSession, project: Project) -> str:
     return f"PLN-{seq:03d}"
 
 
-def get_session_by_code(db: OrmSession, code: str) -> Session | None:
-    return db.scalar(select(Session).where(Session.code == code.upper()))
+def get_session_by_code(db: OrmSession, code: str, project: str | None = None) -> Session | None:
+    """Busca una sesión por código, acotando a un proyecto si se pasa.
+
+    El código es único por proyecto, no global: dos proyectos pueden tener su
+    propia PLN-001. Sin `project` y con más de una coincidencia devolvemos None
+    y que la capa de servicio reporte la ambigüedad, en vez de devolver la
+    primera y colgar tickets de la sesión equivocada.
+    """
+    stmt = select(Session).where(Session.code == code.upper())
+    if project is not None:
+        stmt = stmt.join(Project).where(Project.slug == project)
+        return db.scalar(stmt)
+    rows = list(db.scalars(stmt))
+    return rows[0] if len(rows) == 1 else None
+
+
+def session_projects_for_code(db: OrmSession, code: str) -> list[str]:
+    """Slugs de los proyectos que tienen una sesión con este código."""
+    return list(
+        db.scalars(
+            select(Project.slug)
+            .join(Session, Session.project_id == Project.id)
+            .where(Session.code == code.upper())
+            .order_by(Project.slug)
+        )
+    )
 
 
 def _base_query() -> Select[tuple[Ticket]]:

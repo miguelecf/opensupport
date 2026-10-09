@@ -43,6 +43,40 @@ def test_codes_increment_per_project(session: OrmSession, principal) -> None:  #
     assert (a1.data["code"], a2.data["code"]) == ("OS-001", "OS-002")
 
 
+def test_two_projects_can_each_have_os_001(session: OrmSession, principal) -> None:  # noqa: ANN001
+    """Cada proyecto arranca su propia secuencia: mi-tesis OS-001 y otro OS-001.
+
+    El código se numera por proyecto pero el UNIQUE de tickets.code era global,
+    así que el primer ticket del segundo proyecto moría con IntegrityError.
+    """
+    from app.auth.tokens import create_token, ensure_user
+    from app.domain.models import Project, Ticket
+
+    first = service.create_ticket(session, principal, make_valid_draft(external_key="k1"))
+
+    session.add(Project(slug="otro", name="Otro"))
+    session.flush()
+
+    # Token sin project_scope: vacío significa "todos los proyectos".
+    wide = ensure_user(session, "ana")
+    plain, _ = create_token(
+        session, user=wide, name="ancho", scopes=["tickets:read", "tickets:write"], project_scope=[]
+    )
+    from app.auth.tokens import resolve_token
+
+    scoped = resolve_token(session, plain)
+    assert scoped is not None
+
+    second = service.create_ticket(
+        session, scoped, make_valid_draft(project="otro", external_key="k2")
+    )
+
+    assert first.ok and second.ok
+    assert (first.data["code"], second.data["code"]) == ("OS-001", "OS-001")
+    rows = session.query(Ticket).filter(Ticket.code == "OS-001").all()
+    assert {r.project_id for r in rows} == {1, 2}
+
+
 def test_invalid_draft_writes_no_row(session: OrmSession, principal) -> None:  # noqa: ANN001
     from app.domain.models import Ticket
 
@@ -295,3 +329,38 @@ def test_stale_review_detected_after_edit(session: OrmSession, principal) -> Non
     assert summary["needs_review"] is True
     assert summary["historical_count"] == 1
     assert summary["changes_requested"] == 0
+
+
+def test_ambiguous_ticket_code_asks_for_project(session: OrmSession, principal) -> None:  # noqa: ANN001
+    """Dos proyectos con su propio OS-001: sin project=, no se elige por vos.
+
+    Con el UNIQUE por proyecto, ambos códigos existen. Si set_status resolviera
+    el primero que encuentre, movería el ticket del proyecto equivocado.
+    """
+    from app.auth.tokens import create_token, ensure_user
+    from app.domain.models import Project, Ticket
+
+    session.add(Project(slug="otro", name="Otro"))
+    session.flush()
+    principal.project_scope = []
+    service.create_ticket(session, principal, make_valid_draft(external_key="k1"))
+
+    wide = ensure_user(session, "ana")
+    plain, _ = create_token(session, user=wide, name="ancho", project_scope=[])
+    from app.auth.tokens import resolve_token
+
+    scoped = resolve_token(session, plain)
+    assert scoped is not None
+    service.create_ticket(session, scoped, make_valid_draft(project="otro", external_key="k2"))
+
+    rejected = service.set_status(session, scoped, "OS-001", "in_progress")
+    assert not rejected.ok
+    violation = rejected.violations[0]
+    assert violation.code == "E_AMBIGUOUS_TICKET"
+    assert "mi-tesis" in violation.fix and "otro" in violation.fix
+
+    ok = service.set_status(session, scoped, "OS-001", "in_progress", project="otro")
+    assert ok.ok
+
+    rows = {t.project_id: str(t.status) for t in session.query(Ticket).all()}
+    assert rows == {1: "ready", 2: "in_progress"}

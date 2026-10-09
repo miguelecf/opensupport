@@ -240,14 +240,22 @@ async def board_partial(
 
 
 @router.get("/t/{code}", response_class=HTMLResponse)
-async def ticket_detail(request: Request, code: str) -> Any:  # noqa: ANN401
+async def ticket_detail(
+    request: Request, code: str, project: str | None = None
+) -> Any:  # noqa: ANN401
     templates = request.app.state.templates
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
             return RedirectResponse("/login", status_code=303)
-        ticket = repo.get_ticket_by_code(db, code)
+        ticket = repo.get_ticket_by_code(db, code, project)
         if ticket is None:
+            slugs = repo.projects_for_ticket_code(db, code)
+            if project is None and len(slugs) > 1:
+                links = " · ".join(f'<a href="/t/{code}?project={s}">{s}</a>' for s in slugs)
+                return HTMLResponse(
+                    f"<h1>{code} existe en varios proyectos</h1><p>Elegí: {links}</p>", status_code=409
+                )
             return HTMLResponse("<h1>404</h1><p>Ese ticket no existe.</p>", status_code=404)
         from app.domain.models import Comment, TicketEvent
 
@@ -348,16 +356,20 @@ async def sessions_list(request: Request, project: str | None = None) -> Any:  #
 
 
 @router.get("/s/{code}", response_class=HTMLResponse)
-async def session_detail(request: Request, code: str) -> Any:  # noqa: ANN401
+async def session_detail(
+    request: Request, code: str, project: str | None = None
+) -> Any:  # noqa: ANN401
     templates = request.app.state.templates
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
             return RedirectResponse("/login", status_code=303)
         principal = _principal_for(user)
-        context = sessions.join_session(db, principal, code)
+        context = sessions.join_session(db, principal, code, project=project)
         if not context.ok:
-            return HTMLResponse("<h1>404</h1><p>Esa sesión no existe.</p>", status_code=404)
+            return HTMLResponse(
+                f"<h1>404</h1><p>{context.violations[0].message}</p>", status_code=404
+            )
         return templates.TemplateResponse(
             request,
             "session.html", {"request": request, "csrf_token": _csrf(request), "user": user, "ctx": context.data}

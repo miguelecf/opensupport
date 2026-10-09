@@ -7,7 +7,7 @@
   <tbody>
   {% for s in sessions %}
     <tr>
-      <td><a href="/s/{{ s.code }}"><code>{{ s.code }}</code></a></td>
+      <td><a href="/s/{{ s.code }}?project={{ s.project }}"><code>{{ s.code }}</code></a></td>
       <td>{{ s.title }}</td>
       <td class="muted">{{ s.goal }}</td>
       <td>{{ s.project }}</td>

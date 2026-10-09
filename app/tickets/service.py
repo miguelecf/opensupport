@@ -156,8 +156,25 @@ def create_ticket(
 
     session_row = None
     if draft.session:
-        session_row = repo.get_session_by_code(db, draft.session)
+        # La sesión se resuelve dentro del proyecto del ticket: el código es
+        # único por proyecto, así que sin esto un PLN-001 puede colgar el ticket
+        # de la sesión del proyecto equivocado.
+        session_row = repo.get_session_by_code(db, draft.session, draft.project)
         if session_row is None:
+            slugs = repo.session_projects_for_code(db, draft.session)
+            if draft.project not in slugs and len(slugs) > 1:
+                return Result(
+                    ok=False,
+                    violations=[
+                        _v(
+                            "E_AMBIGUOUS_SESSION",
+                            "session",
+                            f"La sesión '{draft.session}' existe en {len(slugs)} proyectos.",
+                            f"El ticket es de '{draft.project}' pero la sesión también existe en: "
+                            f"{', '.join(slugs)}. Usá el código de la sesión de tu proyecto.",
+                        )
+                    ],
+                )
             return Result(
                 ok=False,
                 violations=[
@@ -295,22 +312,57 @@ def _can_mutate(ticket: Ticket, principal: Principal) -> bool:
     return principal.agent_id is not None and ticket.author_agent_id == principal.agent_id
 
 
-def _load_mutable(db: OrmSession, principal: Principal, code: str) -> Ticket | Result:
-    ticket = repo.get_ticket_by_code(db, code)
-    if ticket is None:
-        return Result(
+def _resolve_ticket(
+    db: OrmSession, code: str, project: str | None
+) -> tuple[Ticket | None, Result | None]:
+    """Devuelve (ticket, error). El código es único por proyecto, no global.
+
+    Sin `project` y con el mismo código en varios proyectos devolvemos None:
+    elegir el primero que aparezca cambiaría el ticket equivocado sin avisar.
+    """
+    ticket = repo.get_ticket_by_code(db, code, project)
+    if ticket is not None:
+        return ticket, None
+    slugs = repo.projects_for_ticket_code(db, code)
+    if project is None and len(slugs) > 1:
+        return None, Result(
             ok=False,
-            violations=[_v("E_UNKNOWN_TICKET", "code", f"El ticket '{code}' no existe.", "Usá list_tickets para ver los existentes.")],
+            violations=[
+                _v(
+                    "E_AMBIGUOUS_TICKET",
+                    "code",
+                    f"El ticket '{code}' existe en {len(slugs)} proyectos y no se puede elegir.",
+                    f"Pasá project= con uno de: {', '.join(slugs)}.",
+                )
+            ],
         )
+    return None, Result(
+        ok=False,
+        violations=[_v("E_UNKNOWN_TICKET", "code", f"El ticket '{code}' no existe.", "Usá list_tickets para ver los existentes.")],
+    )
+
+
+def _load_mutable(
+    db: OrmSession, principal: Principal, code: str, project: str | None = None
+) -> Ticket | Result:
+    ticket, error = _resolve_ticket(db, code, project)
+    if ticket is None:
+        assert error is not None
+        return error
     if not _can_mutate(ticket, principal):
         return _deny()
     return ticket
 
 
 def update_ticket(
-    db: OrmSession, principal: Principal, code: str, patch: TicketPatch, expected_updated_at: str | None
+    db: OrmSession,
+    principal: Principal,
+    code: str,
+    patch: TicketPatch,
+    expected_updated_at: str | None,
+    project: str | None = None,
 ) -> Result:
-    ticket = _load_mutable(db, principal, code)
+    ticket = _load_mutable(db, principal, code, project)
     if isinstance(ticket, Result):
         return ticket
 
@@ -351,9 +403,14 @@ def update_ticket(
 
 
 def set_status(
-    db: OrmSession, principal: Principal, code: str, status: str, note: str | None = None
+    db: OrmSession,
+    principal: Principal,
+    code: str,
+    status: str,
+    note: str | None = None,
+    project: str | None = None,
 ) -> Result:
-    ticket = _load_mutable(db, principal, code)
+    ticket = _load_mutable(db, principal, code, project)
     if isinstance(ticket, Result):
         return ticket
 
@@ -393,9 +450,13 @@ def set_status(
 
 
 def close_ticket(
-    db: OrmSession, principal: Principal, code: str, verification: dict[str, Any]
+    db: OrmSession,
+    principal: Principal,
+    code: str,
+    verification: dict[str, Any],
+    project: str | None = None,
 ) -> Result:
-    ticket = _load_mutable(db, principal, code)
+    ticket = _load_mutable(db, principal, code, project)
     if isinstance(ticket, Result):
         return ticket
 
@@ -436,8 +497,10 @@ def close_ticket(
     return Result(ok=True, data={"code": ticket.code, "status": TicketStatus.DONE})
 
 
-def assign_ticket(db: OrmSession, principal: Principal, code: str, owner_user: str) -> Result:
-    ticket = _load_mutable(db, principal, code)
+def assign_ticket(
+    db: OrmSession, principal: Principal, code: str, owner_user: str, project: str | None = None
+) -> Result:
+    ticket = _load_mutable(db, principal, code, project)
     if isinstance(ticket, Result):
         return ticket
     owner = repo.get_user_by_name(db, owner_user)
@@ -455,13 +518,13 @@ def assign_ticket(db: OrmSession, principal: Principal, code: str, owner_user: s
     return Result(ok=True, data={"code": ticket.code, "owner_user": owner.name})
 
 
-def add_comment(db: OrmSession, principal: Principal, code: str, body: str) -> Result:
-    ticket = repo.get_ticket_by_code(db, code)
+def add_comment(
+    db: OrmSession, principal: Principal, code: str, body: str, project: str | None = None
+) -> Result:
+    ticket, error = _resolve_ticket(db, code, project)
     if ticket is None:
-        return Result(
-            ok=False,
-            violations=[_v("E_UNKNOWN_TICKET", "code", f"El ticket '{code}' no existe.", "Revisá el código.")],
-        )
+        assert error is not None
+        return error
     comment = Comment(
         ticket_id=ticket.id,
         author_user_id=None if principal.agent_id else principal.user_id,
@@ -497,9 +560,14 @@ def _would_cycle(db: OrmSession, project_id: int, from_id: int, to_id: int) -> b
 
 
 def link_tickets(
-    db: OrmSession, principal: Principal, from_code: str, to_ref: str, kind: str
+    db: OrmSession,
+    principal: Principal,
+    from_code: str,
+    to_ref: str,
+    kind: str,
+    project: str | None = None,
 ) -> Result:
-    src = repo.get_ticket_by_code(db, from_code)
+    src = repo.get_ticket_by_code(db, from_code, project)
     if src is None:
         return Result(
             ok=False,
@@ -545,14 +613,17 @@ def link_tickets(
 
 
 def review_ticket(
-    db: OrmSession, principal: Principal, code: str, verdict: str, note: str | None
+    db: OrmSession,
+    principal: Principal,
+    code: str,
+    verdict: str,
+    note: str | None,
+    project: str | None = None,
 ) -> Result:
-    ticket = repo.get_ticket_by_code(db, code)
+    ticket, error = _resolve_ticket(db, code, project)
     if ticket is None:
-        return Result(
-            ok=False,
-            violations=[_v("E_UNKNOWN_TICKET", "code", f"El ticket '{code}' no existe.", "Revisá el código.")],
-        )
+        assert error is not None
+        return error
     if verdict == ReviewVerdict.CHANGES_REQUESTED and not (note or "").strip():
         return Result(
             ok=False,

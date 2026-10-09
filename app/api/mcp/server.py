@@ -78,12 +78,29 @@ async def _run_in_thread[T](fn: Callable[[OrmSession], T]) -> T:
 
 
 @mcp.tool(description="Devuelve un ticket por su código (OS-003), con revisiones e historial.")
-async def get_ticket(code: str) -> dict[str, Any]:
+async def get_ticket(code: str, project: str | None = None) -> dict[str, Any]:
     require_read()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        ticket = repo.get_ticket_by_code(db, code)
+        ticket = repo.get_ticket_by_code(db, code, project)
         if ticket is None:
+            slugs = repo.projects_for_ticket_code(db, code)
+            if project is None and len(slugs) > 1:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"El ticket '{code}' existe en {len(slugs)} proyectos. "
+                        f"Pasá project= con uno de: {', '.join(slugs)}."
+                    ),
+                    "violations": [
+                        {
+                            "code": "E_AMBIGUOUS_TICKET",
+                            "field": "code",
+                            "message": f"El ticket '{code}' existe en varios proyectos.",
+                            "fix": f"Pasá project= con uno de: {', '.join(slugs)}.",
+                        }
+                    ],
+                }
             return {"ok": False, "error": f"El ticket '{code}' no existe."}
         data = {
             "code": ticket.code,
@@ -364,24 +381,27 @@ async def update_ticket(
     code: str,
     patch: dict[str, Any],
     expected_updated_at: str | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     require_write()
     principal = require_write()
     model = TicketPatch(**patch)
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.update_ticket(db, principal, code, model, expected_updated_at).to_dict()
+        return tickets.update_ticket(db, principal, code, model, expected_updated_at, project).to_dict()
 
     return await _run_in_thread(_run)
 
 
 @mcp.tool(description="Cambia quién responde el ticket. No cambia quién lo escribió.")
-async def assign_ticket(code: str, owner_user: str) -> dict[str, Any]:
+async def assign_ticket(
+    code: str, owner_user: str, project: str | None = None
+) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.assign_ticket(db, principal, code, owner_user).to_dict()
+        return tickets.assign_ticket(db, principal, code, owner_user, project).to_dict()
 
     return await _run_in_thread(_run)
 
@@ -394,12 +414,14 @@ async def assign_ticket(code: str, owner_user: str) -> dict[str, Any]:
         f"{SKILL_URI}."
     )
 )
-async def link_tickets(from_code: str, to: str, kind: str = "relates_to") -> dict[str, Any]:
+async def link_tickets(
+    from_code: str, to: str, kind: str = "relates_to", project: str | None = None
+) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.link_tickets(db, principal, from_code, to, LinkKind(kind)).to_dict()
+        return tickets.link_tickets(db, principal, from_code, to, LinkKind(kind), project).to_dict()
 
     return await _run_in_thread(_run)
 
@@ -411,23 +433,27 @@ async def link_tickets(from_code: str, to: str, kind: str = "relates_to") -> dic
         f"verificación. Transiciones válidas en {SKILL_URI}."
     )
 )
-async def set_status(code: str, status: str, note: str | None = None) -> dict[str, Any]:
+async def set_status(
+    code: str, status: str, note: str | None = None, project: str | None = None
+) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.set_status(db, principal, code, status, note).to_dict()
+        return tickets.set_status(db, principal, code, status, note, project).to_dict()
 
     return await _run_in_thread(_run)
 
 
 @mcp.tool(description="Agrega un comentario al ticket. Cualquiera del equipo puede comentar.")
-async def add_comment(code: str, body: str) -> dict[str, Any]:
+async def add_comment(
+    code: str, body: str, project: str | None = None
+) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.add_comment(db, principal, code, body).to_dict()
+        return tickets.add_comment(db, principal, code, body, project).to_dict()
 
     return await _run_in_thread(_run)
 
@@ -445,6 +471,7 @@ async def close_ticket(
     commit: str | None = None,
     commands: list[str] | None = None,
     notes: str | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     require_write()
     principal = require_write()
@@ -456,7 +483,7 @@ async def close_ticket(
     }
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.close_ticket(db, principal, code, verification).to_dict()
+        return tickets.close_ticket(db, principal, code, verification, project).to_dict()
 
     return await _run_in_thread(_run)
 
@@ -472,12 +499,13 @@ async def review_ticket(
     code: str,
     verdict: str,
     note: str | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return tickets.review_ticket(db, principal, code, verdict, note).to_dict()
+        return tickets.review_ticket(db, principal, code, verdict, note, project).to_dict()
 
     return await _run_in_thread(_run)
 
@@ -510,26 +538,36 @@ async def start_session(project: str, title: str, goal: str) -> dict[str, Any]:
         "Entra a una sesión y devuelve su contexto: objetivo, participantes y los "
         "tickets que ya se escribieron. Leé esto ANTES de aportar, para no duplicar "
         "lo que puso otro agente. Es idempotente: podés llamarlo todas las veces. "
+        "El código de sesión es único POR PROYECTO: si el mismo código existe en "
+        "varios proyectos, pasá project= para elegir, o recibís E_AMBIGUOUS_SESSION. "
         f"Índice de sesiones abiertas: {SESSIONS_URI}."
     )
 )
-async def join_session(code: str, role: str = "contributor") -> dict[str, Any]:
+async def join_session(
+    code: str, role: str = "contributor", project: str | None = None
+) -> dict[str, Any]:
     require_read()
     principal = require_read()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return sessions.join_session(db, principal, code, role).to_dict()
+        return sessions.join_session(db, principal, code, role, project).to_dict()
 
     return await _run_in_thread(_run)
 
 
-@mcp.tool(description="Cierra la sesión. Después, create_ticket con esa sesión da E_SESSION_CLOSED.")
-async def close_session(code: str) -> dict[str, Any]:
+@mcp.tool(
+    description=(
+        "Cierra la sesión. Después, create_ticket con esa sesión da E_SESSION_CLOSED. "
+        "El código es único por proyecto: si el mismo código existe en varios, pasá "
+        "project= para elegir, o recibís E_AMBIGUOUS_SESSION con la lista."
+    )
+)
+async def close_session(code: str, project: str | None = None) -> dict[str, Any]:
     require_write()
     principal = require_write()
 
     def _run(db: OrmSession) -> dict[str, Any]:
-        return sessions.close_session(db, principal, code).to_dict()
+        return sessions.close_session(db, principal, code, project).to_dict()
 
     return await _run_in_thread(_run)
 

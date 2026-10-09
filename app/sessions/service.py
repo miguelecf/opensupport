@@ -69,16 +69,53 @@ def _add_participant(
     return row
 
 
+def _ambiguous(db: OrmSession, code: str) -> tickets.Result:
+    """El código existe en más de un proyecto y no se dijo cuál."""
+    slugs = repo.session_projects_for_code(db, code)
+    return tickets.Result(
+        ok=False,
+        violations=[
+            _v(
+                "E_AMBIGUOUS_SESSION",
+                "code",
+                f"La sesión '{code}' existe en {len(slugs)} proyectos y no se puede elegir.",
+                f"Pasá project= con uno de: {', '.join(slugs)}.",
+            )
+        ],
+    )
+
+
+def _resolve(
+    db: OrmSession, code: str, project: str | None
+) -> tuple[SessionRow | None, tickets.Result | None]:
+    """Devuelve (sesión, error). El error explica si no existe o si es ambigua."""
+    row = repo.get_session_by_code(db, code, project)
+    if row is not None:
+        return row, None
+    if project is None and len(repo.session_projects_for_code(db, code)) > 1:
+        return None, _ambiguous(db, code)
+    return None, tickets.Result(
+        ok=False,
+        violations=[_v("E_UNKNOWN_SESSION", "code", f"La sesión '{code}' no existe.", "Usá list_sessions.")],
+    )
+
+
 def join_session(
-    db: OrmSession, principal: Principal, code: str, role: str = ParticipantRole.CONTRIBUTOR
+    db: OrmSession,
+    principal: Principal,
+    code: str,
+    role: str = ParticipantRole.CONTRIBUTOR,
+    project: str | None = None,
 ) -> tickets.Result:
-    """Idempotente por diseño: el agente puede llamar esto todas veces que quiera."""
-    row = repo.get_session_by_code(db, code)
+    """Idempotente por diseño: el agente puede llamar esto todas veces que quiera.
+
+    `project` solo hace falta para desambiguar: el código de sesión es único por
+    proyecto, así que dos proyectos pueden tener su propia PLN-001.
+    """
+    row, error = _resolve(db, code, project)
     if row is None:
-        return tickets.Result(
-            ok=False,
-            violations=[_v("E_UNKNOWN_SESSION", "code", f"La sesión '{code}' no existe.", "Usá list_sessions.")],
-        )
+        assert error is not None  # _resolve siempre devuelve el error si no hay sesión
+        return error
     _add_participant(db, row.id, principal, role)
     participants = [
         {"kind": "agent" if p.agent_id else "user", "role": p.role, "id": p.agent_id or p.user_id}
@@ -111,14 +148,15 @@ def join_session(
 
 
 def close_session(
-    db: OrmSession, principal: Principal, code: str  # noqa: ARG001 - cualquiera con write cierra
+    db: OrmSession,
+    principal: Principal,  # noqa: ARG001 - cualquiera con write cierra
+    code: str,
+    project: str | None = None,
 ) -> tickets.Result:
-    row = repo.get_session_by_code(db, code)
+    row, error = _resolve(db, code, project)
     if row is None:
-        return tickets.Result(
-            ok=False,
-            violations=[_v("E_UNKNOWN_SESSION", "code", f"La sesión '{code}' no existe.", "Revisá el código.")],
-        )
+        assert error is not None  # _resolve siempre devuelve el error si no hay sesión
+        return error
     if row.status == SessionStatus.CLOSED:
         return tickets.Result(ok=True, data={"code": row.code, "status": row.status, "tickets_count": 0})
     count = len([t for t in repo.list_tickets(db, project=_slug(db, row.project_id), limit=500) if t.session_id == row.id])

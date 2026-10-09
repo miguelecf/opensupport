@@ -10,7 +10,7 @@
       <span class="tag">{{ ticket.type }}</span>
       <span class="tag">{{ ticket.priority }}</span>
       <span class="tag">proyecto: {{ ticket.project.slug }}</span>
-      {% if ticket.session %}<span class="tag">sesión: <a href="/s/{{ ticket.session.code }}">{{ ticket.session.code }}</a></span>{% endif %}
+      {% if ticket.session %}<span class="tag">sesión: <a href="/s/{{ ticket.session.code }}?project={{ ticket.project }}">{{ ticket.session.code }}</a></span>{% endif %}
       {% if ticket.external_key %}<span class="tag mono">key: {{ ticket.external_key }}</span>{% endif %}
     </div>
   </header>
@@ -64,7 +64,7 @@
       <li><strong>{{ r.verdict }}</strong>{% if r.note %} — {{ r.note }}{% endif %} <span class="muted">{{ r.created_at.strftime('%d/%m %H:%M') }}</span></li>
       {% endfor %}
     </ul>
-    <form method="post" action="/t/{{ ticket.code }}/review" class="review-form">
+    <form method="post" action="/t/{{ ticket.code }}/review?project={{ ticket.project }}" class="review-form">
       <button name="verdict" value="approved" class="ok">Apruebo</button>
       <input type="text" name="note" placeholder="si pedís cambios, explicá cuáles">
       <button name="verdict" value="changes_requested" class="warn">Pido cambios</button>
@@ -78,7 +78,7 @@
 
   <section class="status-bar">
     <h2>Estado</h2>
-    <form method="post" action="/t/{{ ticket.code }}/status" class="inline">
+    <form method="post" action="/t/{{ ticket.code }}/status?project={{ ticket.project }}" class="inline">
       {% for s in ['ready','in_progress','blocked','open','wont'] %}
       <button name="status" value="{{ s }}">{{ s }}</button>
       {% endfor %}
@@ -92,7 +92,7 @@
       <li><strong>{{ c.author_user.name if c.author_user else (c.author_agent.name if c.author_agent else '?') }}</strong>: {{ c.body }}</li>
       {% endfor %}
     </ul>
-    <form method="post" action="/t/{{ ticket.code }}/comment" class="inline">
+    <form method="post" action="/t/{{ ticket.code }}/comment?project={{ ticket.project }}" class="inline">
       <input type="text" name="body" placeholder="dejá un comentario…" required>
       <button>Enviar</button>
     </form>

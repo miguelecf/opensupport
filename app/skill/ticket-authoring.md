@@ -170,6 +170,14 @@ en la misma sesión. Es idempotente: llamalo todas las veces que quieras.
 Una sesión cerrada no acepta tickets nuevos (`E_SESSION_CLOSED`), pero `join_session`
 sigue respondiendo en modo lectura para que puedas ver de qué se trataba.
 
+**El código de sesión es único por proyecto.** Dos proyectos pueden tener su
+propia `PLN-001`, así que `join_session("PLN-001")` sin `project=` devuelve
+`E_AMBIGUOUS_SESSION` con la lista de proyectos. Pasá `project=` para elegir.
+
+En `create_ticket` y `create_tickets_batch` no hace falta: la sesión se resuelve
+con el `project` del propio draft, así que `session="PLN-001"` siempre busca en
+el proyecto del ticket.
+
 ## Respuestas a las violaciones
 
 | Código | Qué hacer |
@@ -183,3 +191,23 @@ sigue respondiendo en modo lectura para que puedas ver de qué se trataba.
 | `E_NOT_YOUR_TICKET` | No sos el owner. Pedí que te lo reasignen con `assign_ticket`. |
 | `E_CLOSED_NEEDS_EVIDENCE` | Usá `close_ticket` con `pr` o `commit` y un comando. |
 | `E_REVIEW_NOTE_REQUIRED` | Escribí qué hay que cambiar. |
+| `E_AMBIGUOUS_SESSION` | Ese código de sesión existe en varios proyectos. Pasá `project=`. |
+| `E_AMBIGUOUS_TICKET` | Ese código de ticket existe en varios proyectos. Pasá `project=`. |
+
+## Códigos repetidos entre proyectos
+
+El código de un ticket (`OS-001`) y de una sesión (`PLN-001`) es único **por
+proyecto**, no en todo el board. Si trabajás con dos proyectos, el mismo código
+existe en los dos.
+
+Cuando eso pasa, cualquier tool que reciba solo `code` devuelve
+`E_AMBIGUOUS_TICKET` o `E_AMBIGUOUS_SESSION` en vez de elegir por vos:
+
+```text
+get_ticket("OS-001")                    → E_AMBIGUOUS_TICKET
+get_ticket("OS-001", project="car-adm") → el de car-adm
+```
+
+**Siempre que tu token tenga más de un proyecto en scope, pasá `project=`.**
+`create_ticket` y `create_tickets_batch` no lo necesitan: la sesión se resuelve
+con el `project` del propio draft.

@@ -144,12 +144,15 @@ class Ticket(Base):
     __tablename__ = "tickets"
     __table_args__ = (
         UniqueConstraint("project_id", "external_key", name="uq_ticket_project_external_key"),
+        # El código se numera por proyecto, así que la unicidad también es por proyecto.
+        # Con UNIQUE global el primer ticket del segundo proyecto moría con IntegrityError.
+        UniqueConstraint("project_id", "code", name="uq_ticket_project_code"),
         Index("ix_ticket_owner_status", "owner_user_id", "status"),
         Index("ix_ticket_author", "author_agent_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(32), unique=True)
+    code: Mapped[str] = mapped_column(String(32))
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
     session_id: Mapped[int | None] = mapped_column(
         ForeignKey("sessions.id", ondelete="SET NULL"), default=None, index=True

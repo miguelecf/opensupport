@@ -7,13 +7,13 @@
   <tbody>
   {% for t in items %}
     <tr>
-      <td><a href="/t/{{ t.code }}"><code>{{ t.code }}</code></a></td>
+      <td><a href="/t/{{ t.code }}?project={{ t.project }}"><code>{{ t.code }}</code></a></td>
       <td>{{ t.title }}{% if t.fragment %}<div class="frag">{{ t.fragment | safe }}</div>{% endif %}</td>
       <td><span class="pill s-{{ t.status }}">{{ t.status }}</span></td>
       <td>{{ t.type }}</td>
       <td>{{ t.priority }}</td>
       <td>{{ t.project }}</td>
-      <td>{% if t.session %}<a href="/s/{{ t.session }}">{{ t.session }}</a>{% else %}—{% endif %}</td>
+      <td>{% if t.session %}<a href="/s/{{ t.session }}?project={{ t.project }}">{{ t.session }}</a>{% else %}—{% endif %}</td>
       <td>{{ t.owner }}</td>
       <td>
         {% if t.review.needs_review %}<span class="rev stale" title="Sin revisar desde el último cambio">sin revisar</span>

@@ -236,3 +236,14 @@ def test_sessions_resource_is_readable(raw: tuple[TestClient, str]) -> None:
     )["result"]
     assert result["contents"][0]["mimeType"] == "text/markdown"
     assert result["contents"][0]["text"].startswith("#")
+
+
+def test_tools_taking_a_code_also_take_a_project(raw: tuple[TestClient, str]) -> None:
+    """El código es único por proyecto: sin `project` no se puede desambiguar."""
+    client, token = raw
+    tools = _rpc(client, token, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+    by_code = [t for t in tools if "code" in t["inputSchema"]["properties"]]
+    assert len(by_code) >= 8, "esperábamos las tools que operan por código"
+    for tool in by_code:
+        properties = tool["inputSchema"]["properties"]
+        assert "project" in properties, f"{tool['name']} no acepta project= para desambiguar"
