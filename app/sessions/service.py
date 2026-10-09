@@ -137,7 +137,15 @@ def list_sessions(
     for row in rows:
         if project and _slug(db, row.project_id) != project:
             continue
-        out.append({"code": row.code, "title": row.title, "goal": row.goal, "status": row.status})
+        out.append(
+            {
+                "code": row.code,
+                "title": row.title,
+                "goal": row.goal,
+                "status": row.status,
+                "project": _slug(db, row.project_id),
+            }
+        )
     return out[:limit]
 
 

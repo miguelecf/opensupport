@@ -164,3 +164,75 @@ def test_mounting_mcp_last_does_not_shadow_the_web(raw: tuple[TestClient, str]) 
     # follow_redirects=False: sin sesión, el board tiene que redirigir, no servir 200.
     assert client.get("/", follow_redirects=False).status_code == 303
     assert client.get("/login").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Orientación: qué encuentra un agente en su primer contacto
+# --------------------------------------------------------------------------- #
+
+WRITE_TOOLS = (
+    "create_ticket",
+    "create_tickets_batch",
+    "update_ticket",
+    "link_tickets",
+    "close_ticket",
+    "set_status",
+    "start_session",
+    "join_session",
+)
+
+
+def test_every_write_tool_points_somewhere(raw: tuple[TestClient, str]) -> None:
+    """Un agente solo lee tools/list. Si ahí no dice a dónde ir, no lo va a descubrir."""
+    client, token = raw
+    tools = {t["name"]: t["description"] for t in _rpc(
+        client, token, {"jsonrpc": "2.0", "id": 9, "method": "tools/list"}
+    )["result"]["tools"]}
+    for name in WRITE_TOOLS:
+        desc = tools[name]
+        assert (
+            "opensupport://skill" in desc or "opensupport://sessions" in desc
+        ), f"{name} no dice dónde está el contrato"
+
+
+def test_create_ticket_says_lint_first(raw: tuple[TestClient, str]) -> None:
+    client, token = raw
+    tools = {t["name"]: t["description"] for t in _rpc(
+        client, token, {"jsonrpc": "2.0", "id": 10, "method": "tools/list"}
+    )["result"]["tools"]}
+    assert "lint_ticket" in tools["create_ticket"]
+
+
+def test_close_ticket_says_set_status_does_not_close(raw: tuple[TestClient, str]) -> None:
+    client, token = raw
+    tools = {t["name"]: t["description"] for t in _rpc(
+        client, token, {"jsonrpc": "2.0", "id": 11, "method": "tools/list"}
+    )["result"]["tools"]}
+    assert "done" in tools["close_ticket"]
+    assert "close_ticket" in tools["set_status"]
+
+
+def test_sessions_are_discoverable_without_templates(raw: tuple[TestClient, str]) -> None:
+    """La plantilla session/{code} solo aparece en resources/templates/list.
+    Sin un resource plano, un agente no descubre que las sesiones existen."""
+    client, token = raw
+    uris = {
+        r["uri"]
+        for r in _rpc(client, token, {"jsonrpc": "2.0", "id": 12, "method": "resources/list"})[
+            "result"
+        ]["resources"]
+    }
+    assert "opensupport://sessions" in uris
+    assert "opensupport://skill/ticket-authoring" in uris
+
+
+def test_sessions_resource_is_readable(raw: tuple[TestClient, str]) -> None:
+    client, token = raw
+    result = _rpc(
+        client,
+        token,
+        {"jsonrpc": "2.0", "id": 13, "method": "resources/read",
+         "params": {"uri": "opensupport://sessions"}},
+    )["result"]
+    assert result["contents"][0]["mimeType"] == "text/markdown"
+    assert result["contents"][0]["text"].startswith("#")

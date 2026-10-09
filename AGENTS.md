@@ -89,6 +89,16 @@ uv run opensupport export --format gh
    acepta, el loop del agente se rompe.
 5. Agregá el test en `tests/test_integration.py` (contra el servidor real, no mocks).
 
+**La descripción de una tool es la documentación que el agente lee.** La mayoría
+solo mira `tools/list`: no abre resources ni lee el skill. Si la descripción no
+dice a dónde ir, el agente no lo descubre. Toda tool de escritura tiene que
+nombrar `opensupport://skill/ticket-authoring` o `opensupport://sessions`.
+`tests/test_protocol.py` lo verifica para que no se rompa en silencio.
+
+**Los resources tienen que aparecer en `resources/list`, no solo como plantilla.**
+Una plantilla `{code}` solo se ve en `resources/templates/list`, que muchos
+clientes nunca llaman. Si algo debe ser descubrible, va como resource plano.
+
 ## Seguridad implementada
 
 | Propiedad | Dónde | Cómo se rompe |

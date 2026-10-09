@@ -29,6 +29,11 @@ from app.tickets.schema import (
 
 SKILL_PATH = Path(__file__).resolve().parents[2] / "skill" / "ticket-authoring.md"
 
+#: URI del resource con el contrato de redacción. Va en las descripciones de las tools
+#: de escritura porque el agente solo lee tools/list si no abre el resource.
+SKILL_URI = "opensupport://skill/ticket-authoring"
+SESSIONS_URI = "opensupport://sessions"
+
 INSTRUCTIONS = """\
 OpenSupport es un board de tickets para equipos donde los agentes de código hacen
 el trabajo de analisis. Tu flujo normal es:
@@ -270,7 +275,10 @@ async def lint_ticket(
 @mcp.tool(
     description=(
         "Crea un ticket validado. Idempotente por external_key: si ya existe, "
-        "devuelve el existente en lugar de duplicarlo. Nace en estado 'ready'."
+        "devuelve el existente en lugar de duplicarlo. Nace en estado 'ready'.\n\n"
+        "FLUJO: pasá el mismo borrador por lint_ticket hasta que devuelva ok:true, "
+        "y recién después crealo acá. El contrato completo de redacción está en el "
+        f"resource {SKILL_URI} (leelo una vez con resources/read)."
     )
 )
 async def create_ticket(
@@ -325,7 +333,9 @@ async def create_ticket(
 @mcp.tool(
     description=(
         "Crea varios tickets de una. Es PARCIAL a propósito: un item inválido no "
-        "tira los válidos. Devuelve un resultado por item, en el mismo orden."
+        "tira los válidos: devolvé created/rejected por cada uno, en orden.\n\n"
+        "FLUJO: linteá cada item antes con lint_ticket, o los rechazados vienen "
+        f"sin contexto. Contrato en el resource {SKILL_URI}."
     )
 )
 async def create_tickets_batch(
@@ -343,7 +353,13 @@ async def create_tickets_batch(
     return await _run_in_thread(_run)
 
 
-@mcp.tool(description="Actualiza un ticket. Mandá expected_updated_at para evitar pisar a otro agente.")
+@mcp.tool(
+    description=(
+        "Actualiza un ticket. Mandá expected_updated_at con el valor de get_ticket: "
+        "si otro agente lo cambió primero, recibís E_CONFLICT y no pisás su trabajo. "
+        f"Revisá {SKILL_URI} si necesitás recordar qué campos pedir."
+    )
+)
 async def update_ticket(
     code: str,
     patch: dict[str, Any],
@@ -370,7 +386,14 @@ async def assign_ticket(code: str, owner_user: str) -> dict[str, Any]:
     return await _run_in_thread(_run)
 
 
-@mcp.tool(description="Vincula dos tickets: blocks (dependencia), split_from o relates_to.")
+@mcp.tool(
+    description=(
+        "Vincula dos tickets: blocks (dependencia de bloqueo), split_from (nació de "
+        "dividir otro) o relates_to (contexto). Acepta code o external_key como destino. "
+        "Un ciclo en blocks devuelve E_DEPS_CYCLE. Tipos y ejemplos en "
+        f"{SKILL_URI}."
+    )
+)
 async def link_tickets(from_code: str, to: str, kind: str = "relates_to") -> dict[str, Any]:
     require_write()
     principal = require_write()
@@ -383,7 +406,9 @@ async def link_tickets(from_code: str, to: str, kind: str = "relates_to") -> dic
 
 @mcp.tool(
     description=(
-        "Cambia el estado. No acepta 'done': para cerrar usá close_ticket con evidencia."
+        "Cambia el estado de un ticket. Acepta ready, in_progress, blocked, open y wont. "
+        "NO acepta 'done': para cerrar usá close_ticket con pr o commit y un comando de "
+        f"verificación. Transiciones válidas en {SKILL_URI}."
     )
 )
 async def set_status(code: str, status: str, note: str | None = None) -> dict[str, Any]:
@@ -410,7 +435,8 @@ async def add_comment(code: str, body: str) -> dict[str, Any]:
 @mcp.tool(
     description=(
         "Cierra el ticket con evidencia de que se implementó. "
-        "Exige pr o commit, y al menos un comando de verificación."
+        "Exige pr o commit, y al menos un comando de verificación. Es la única "
+        f"forma de llegar a 'done': set_status(code, 'done') siempre falla. Ver {SKILL_URI}."
     )
 )
 async def close_ticket(
@@ -461,7 +487,14 @@ async def review_ticket(
 # --------------------------------------------------------------------------- #
 
 
-@mcp.tool(description="Abre una sesión de planificación sobre un tema dentro de un proyecto.")
+@mcp.tool(
+    description=(
+        "Abre una sesión de planificación sobre un tema dentro de un proyecto. "
+        "Sirve para que varios agentes trabajen el mismo tema sin pisarse: después "
+        "cada uno llama join_session para leer lo ya escrito antes de aportar. "
+        f"Sesiones abiertas: {SESSIONS_URI}."
+    )
+)
 async def start_session(project: str, title: str, goal: str) -> dict[str, Any]:
     require_write()
     principal = require_write()
@@ -476,7 +509,8 @@ async def start_session(project: str, title: str, goal: str) -> dict[str, Any]:
     description=(
         "Entra a una sesión y devuelve su contexto: objetivo, participantes y los "
         "tickets que ya se escribieron. Leé esto ANTES de aportar, para no duplicar "
-        "lo que puso otro agente. Es idempotente: podés llamarlo todas las veces."
+        "lo que puso otro agente. Es idempotente: podés llamarlo todas las veces. "
+        f"Índice de sesiones abiertas: {SESSIONS_URI}."
     )
 )
 async def join_session(code: str, role: str = "contributor") -> dict[str, Any]:
@@ -561,6 +595,45 @@ async def board_snapshot() -> str:
     return await _run_in_thread(_run)
 
 
+@mcp.resource(
+    "opensupport://sessions",
+    mime_type="text/markdown",
+    description="Sesiones de planificación abiertas. Para entrar a una: join_session.",
+)
+async def sessions_index() -> str:
+    """Existe para que las sesiones aparezcan en resources/list.
+
+    La plantilla opensupport://session/{code} solo se ve en resources/templates/list,
+    que muchos clientes nunca llaman. Un agente que no las descubre, no las usa.
+    """
+    require_read()
+
+    def _run(db: OrmSession) -> str:  # noqa: ANN001
+        rows = sessions.list_sessions(db, limit=50)
+        if not rows:
+            return (
+                "# Sesiones de planificación\n\n"
+                "No hay sesiones abiertas. Abrí una con `start_session(project, title, goal)`.\n"
+            )
+        lines = ["# Sesiones abiertas", ""]
+        for row in rows:
+            count = len(
+                [
+                    t
+                    for t in repo.list_tickets(db, project=row["project"], limit=200)
+                    if t.session_id is not None
+                ]
+            )
+            lines.append(f"- **{row['code']}** ({row['project']}) — {row['title']}")
+            lines.append(f"  - objetivo: {row['goal']}")
+            lines.append(f"  - tickets: {count}")
+        lines.append("")
+        lines.append("Entrá con `join_session(code)` antes de aportar tickets.")
+        return "\n".join(lines)
+
+    return await _run_in_thread(_run)
+
+
 @mcp.resource("opensupport://meta", mime_type="application/json")
 async def meta() -> dict[str, Any]:
     require_read()
@@ -584,6 +657,7 @@ async def meta() -> dict[str, Any]:
                 "opensupport://schema/violations",
                 "opensupport://board/snapshot",
                 "opensupport://session/{code}",
+                "opensupport://sessions",
                 "opensupport://meta",
             ],
         }
