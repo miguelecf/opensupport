@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.orm import Session as OrmSession
@@ -52,8 +52,28 @@ def require_user(db: OrmSession, request: Request) -> User | None:
     return current_user(db, request)
 
 
+CSRF_COOKIE = "opensupport_csrf"
+CSRF_HEADER = "X-CSRF-Token"
+
+
 def _csrf(request: Request) -> str:
-    return request.cookies.get("opensupport_csrf", "")
+    return request.cookies.get(CSRF_COOKIE, "")
+
+
+def require_csrf(request: Request) -> None:
+    """Toda mutación web exige el token CSRF en el header.
+
+    La web se autentica por cookie, así que un agente con browser (computer-use)
+    navegando a una página hostil podría disparar acciones con tu sesión.
+    `SameSite=Lax` cubre el caso común; esto cubre el resto.
+    """
+    expected = _csrf(request)
+    given = request.headers.get(CSRF_HEADER, "")
+    if not expected or not secrets.compare_digest(expected, given):
+        raise HTTPException(
+            status_code=403,
+            detail="Falta el token CSRF. Recargá la página y volvé a intentar.",
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -87,12 +107,13 @@ async def login(request: Request, token: str = Form()) -> Any:  # noqa: ANN401
         secure=False,
         max_age=settings.session_max_age,
     )
-    response.set_cookie("opensupport_csrf", secrets.token_urlsafe(16), samesite="lax")
+    response.set_cookie(CSRF_COOKIE, secrets.token_urlsafe(32), samesite="lax", httponly=False)
     return response
 
 
 @router.post("/logout")
-async def logout() -> RedirectResponse:
+async def logout(request: Request) -> RedirectResponse:
+    require_csrf(request)
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(settings.session_cookie_name)
     return response
@@ -159,6 +180,7 @@ async def board(
             "index.html",
             {
                 "request": request,
+                "csrf_token": _csrf(request),
                 "user": user,
                 "items": items,
                 "projects": [p.slug for p in repo.all_projects(db)],
@@ -242,6 +264,7 @@ async def ticket_detail(request: Request, code: str) -> Any:  # noqa: ANN401
             "ticket.html",
             {
                 "request": request,
+                "csrf_token": _csrf(request),
                 "user": user,
                 "ticket": ticket,
                 "comments": comments,
@@ -256,6 +279,7 @@ async def ticket_detail(request: Request, code: str) -> Any:  # noqa: ANN401
 async def change_status(
     request: Request, code: str, status: str = Form(), note: str = Form("")
 ) -> Any:  # noqa: ANN401
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
@@ -269,6 +293,7 @@ async def change_status(
 async def post_review(
     request: Request, code: str, verdict: str = Form(), note: str = Form("")
 ) -> Any:  # noqa: ANN401
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
@@ -281,6 +306,7 @@ async def post_review(
 
 @router.post("/t/{code}/comment")
 async def post_comment(request: Request, code: str, body: str = Form()) -> Any:  # noqa: ANN401
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
@@ -313,6 +339,7 @@ async def sessions_list(request: Request, project: str | None = None) -> Any:  #
             "sessions.html",
             {
                 "request": request,
+                "csrf_token": _csrf(request),
                 "user": user,
                 "sessions": rows,
                 "projects": [p.slug for p in repo.all_projects(db)],
@@ -333,7 +360,7 @@ async def session_detail(request: Request, code: str) -> Any:  # noqa: ANN401
             return HTMLResponse("<h1>404</h1><p>Esa sesión no existe.</p>", status_code=404)
         return templates.TemplateResponse(
             request,
-            "session.html", {"request": request, "user": user, "ctx": context.data}
+            "session.html", {"request": request, "csrf_token": _csrf(request), "user": user, "ctx": context.data}
         )
 
 
@@ -355,7 +382,7 @@ async def tokens_page(request: Request) -> Any:  # noqa: ANN401
         return templates.TemplateResponse(
             request,
             "tokens.html",
-            {"request": request, "user": user, "tokens": rows, "projects": [p.slug for p in repo.all_projects(db)]},
+            {"request": request, "csrf_token": _csrf(request), "user": user, "tokens": rows, "projects": [p.slug for p in repo.all_projects(db)]},
         )
 
 
@@ -370,6 +397,7 @@ async def create_token(
     from app.auth.tokens import create_token
     from app.tickets.service import ensure_agent
 
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
@@ -389,6 +417,7 @@ async def create_token(
 async def revoke(request: Request, token_id: int) -> Any:  # noqa: ANN401
     from app.auth.tokens import revoke_token
 
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:
@@ -406,7 +435,7 @@ async def projects_page(request: Request) -> Any:  # noqa: ANN401
             return RedirectResponse("/login", status_code=303)
         return templates.TemplateResponse(
             request,
-            "projects.html", {"request": request, "user": user, "projects": repo.all_projects(db)}
+            "projects.html", {"request": request, "csrf_token": _csrf(request), "user": user, "projects": repo.all_projects(db)}
         )
 
 
@@ -414,6 +443,7 @@ async def projects_page(request: Request) -> Any:  # noqa: ANN401
 async def create_project(request: Request, slug: str = Form(), name: str = Form()) -> Any:  # noqa: ANN401
     from app.db.base import utcnow
 
+    require_csrf(request)
     with session_scope() as db:
         user = current_user(db, request)
         if user is None:

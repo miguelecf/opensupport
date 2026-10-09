@@ -83,14 +83,33 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
-def db_is_ready() -> bool:
+def db_is_ready() -> tuple[bool, str]:
+    """(listo, detalle). El detalle va a /readyz para que Railway sepa por qué."""
     try:
         with session_scope() as s:
             s.execute(text("SELECT 1"))
-        return True
+            # integrity_check completo en cada readyz sería caro; el plan lo pide
+            # porque un disco lleno o un NFS raro producen corrupción silenciosa.
+            mode = s.execute(text("PRAGMA journal_mode")).scalar_one()
+            size_mb = 0.0
+            if settings.database_url.startswith("sqlite:///"):
+                path = settings.sqlite_path
+                size_mb = path.stat().st_size / 1_048_576 if path.exists() else 0.0
+        return True, f"journal={mode} size={size_mb:.1f}MB"
     except Exception:
         logger.warning("DB no accesible", exc_info=True)
-        return False
+        return False, "no conecta"
+
+
+def db_integrity_check() -> tuple[bool, str]:
+    """PRAGMA integrity_check. Caro: se llama desde /readyz, no por request."""
+    try:
+        with session_scope() as s:
+            result = s.execute(text("PRAGMA integrity_check")).scalar_one()
+        return result == "ok", str(result)
+    except Exception:
+        logger.warning("integrity_check falló", exc_info=True)
+        return False, "no se pudo ejecutar"
 
 
 def reset_engine() -> None:

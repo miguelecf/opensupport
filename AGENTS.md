@@ -62,8 +62,10 @@ uv run opensupport export --format gh
 2. **`db_call` / `_run_in_thread` para todo acceso a DB desde async.** Nunca
    pegarle a la sesión desde una corrutina: bloquea el event loop.
 3. **Un solo worker.** SQLite serializa escritores. `--workers N` rompe el modelo.
-4. **Nunca loguear credenciales.** `Authorization` y `Set-Cookie` van a una lista
-   de redacción. El token plano solo existe en la variable que lo genera.
+   El rate limit (`app/ratelimit.py`) es un dict en memoria y depende de esto.
+4. **Nunca loguear credenciales.** `app/logging_setup.py` redacta `Authorization`,
+   `Set-Cookie`, `Cookie` y los tokens `os_*`. Ojo: el filtro va en los **handlers**,
+   no en los loggers — los filtros de logger no se heredan a los hijos.
 5. **Cero `print`** (ruff T201). `logging.getLogger(__name__)`.
 6. **`mypy --strict` limpio.** Los `# type: ignore` se justifican.
 7. **Autoescape de Jinja siempre on.** Nunca `autoescape=False`.
@@ -86,6 +88,19 @@ uv run opensupport export --format gh
    Es el contrato entero: si `lint_ticket` rechaza un campo que `create_ticket`
    acepta, el loop del agente se rompe.
 5. Agregá el test en `tests/test_integration.py` (contra el servidor real, no mocks).
+
+## Seguridad implementada
+
+| Propiedad | Dónde | Cómo se rompe |
+|---|---|---|
+| CSRF en toda mutación web | `api/web/views.py:require_csrf` | Header `X-CSRF-Token` != cookie. Base lo inyecta por htmx. |
+| Rate limit por token | `ratelimit.py`, dentro de `require_write`/`require_read` | Token bucket 120/min escrituras, 600/min lecturas |
+| Redacción de credenciales | `logging_setup.py` | Filtro en los handlers; también tacha `os_*` en texto libre |
+| Aislamiento de escritura | `tickets/service.py:_can_mutate` | `E_NOT_YOUR_TICKET` si no sos owner, autor ni admin |
+| Alcance de proyecto | `api_tokens.project_scope` | `E_PROJECT_OUT_OF_SCOPE` con la lista de permitidos |
+| `done` con evidencia | `tickets/service.py:close_ticket` | Sin PR/commit o sin comando, no cierra |
+
+Si agregás una tool que escriba, no te saltees `require_write()`: ahí viven el scope y el rate limit.
 
 ## Anti-patrones
 

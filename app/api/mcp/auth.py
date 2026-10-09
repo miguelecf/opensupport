@@ -73,13 +73,34 @@ def current_principal() -> Principal:
     )
 
 
+def enforce_rate_limit(kind: str, principal: Principal | None = None) -> None:
+    """Corta un token quemado. El error dice cuánto esperar."""
+    from fastmcp.exceptions import ToolError
+
+    from app.ratelimit import get_limiter
+
+    who = principal if principal is not None else current_principal()
+    ident = str(who.token_id or who.user_id)
+    allowed, retry_after = get_limiter().check(kind, ident)
+    if not allowed:
+        raise ToolError(
+            f"Rate limit: superaste el límite de {kind}. Reintentá en {retry_after}s."
+        )
+
+
 def require_write() -> Principal:
+    """Scope de escritura + rate limit de escritura, en un solo lugar.
+
+    Que el límite viva acá y no en cada tool es a propósito: si hay que
+    acordarse de llamarlo, algún día se olvida en una tool nueva.
+    """
     principal = current_principal()
     if not principal.can_write:
         raise PermissionError(
             "Tu token no tiene el scope 'tickets:write'. "
             "Pedí uno con escritura desde /settings/tokens."
         )
+    enforce_rate_limit("write")
     return principal
 
 
@@ -89,4 +110,5 @@ def require_read() -> Principal:
         raise PermissionError(
             "Tu token no tiene el scope 'tickets:read'. Pedí uno desde /settings/tokens."
         )
+    enforce_rate_limit("read")
     return principal

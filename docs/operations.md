@@ -95,18 +95,24 @@ Checklist al agregar una migración:
 | Ruta | Qué responde |
 |---|---|
 | `/healthz` | El proceso está vivo. Always 200 mientras el proceso exista. |
-| `/readyz` | La DB conecta. 503 si no. Es el que usa Railway. |
+| `/readyz` | DB conecta + `PRAGMA integrity_check` + journal y tamaño. 503 si algo falla. Es el que usa Railway. |
 
 ## Troubleshooting
 
-### El agente dice `401 Unauthorized`
+### El agente dice `Rate limit: superaste el límite`
+
+El token hizo más escrituras que las permitidas en un minuto (120 por default).
+Esperá el tiempo que dice el error, o subilo con
+`OPENSUPPORT_RATE_LIMIT_WRITES_PER_MIN`. Si aparece en uso normal, lo más
+probable es un agente en loop: revisá si está reintentando un `create_ticket`
+que siempre falla.
+
+### El agente dice `E_PROJECT_OUT_OF_SCOPE`
 
 El token no existe, está revocado, o el header no viaja.
 - Verificá que sea `Authorization: Bearer os_...`, sin comillas.
 - En `/settings/tokens` comprobá que no esté revocado.
 - El token se muestra **una sola vez**. Si lo perdiste, creá otro.
-
-### El agente dice `E_PROJECT_OUT_OF_SCOPE`
 
 El token no tiene ese proyecto en su `project_scope`. El `fix` de la violación
 lista los permitidos. Se cambia desde `/settings/tokens`.

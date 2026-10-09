@@ -14,7 +14,8 @@ from fastapi.templating import Jinja2Templates
 
 from app.api.mcp.server import mcp
 from app.api.web import router as web
-from app.db.base import db_is_ready, get_engine
+from app.db.base import db_integrity_check, db_is_ready, get_engine
+from app.logging_setup import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ mcp_app = mcp.http_app(path="/", transport="http", stateless_http=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """El lifespan del MCP app tiene que correr: es el que inicializa su task group."""
+    configure_logging()
     get_engine()
     async with mcp_app.lifespan(app):
         yield
@@ -56,12 +58,18 @@ def create_app() -> FastAPI:
 
     @app.get("/readyz", include_in_schema=False, response_model=None)
     async def readyz(request: Request) -> HTMLResponse | dict[str, object]:
-        ready = db_is_ready()
+        ready, detail = db_is_ready()
+        integrity_ok, integrity = db_integrity_check()
+        healthy = ready and integrity_ok
         if request.headers.get("accept", "").startswith("text/html"):
-            body = "ok" if ready else "no: la base de datos no responde"
-            status = 200 if ready else 503
-            return HTMLResponse(body, status_code=status)
-        return {"status": "ok" if ready else "error", "database": ready}
+            body = f"ok ({detail})" if healthy else f"no: {detail}; integridad={integrity}"
+            return HTMLResponse(body, status_code=200 if healthy else 503)
+        return {
+            "status": "ok" if healthy else "error",
+            "database": ready,
+            "detail": detail,
+            "integrity": integrity,
+        }
 
     @app.get("/api/v1/{path:path}", include_in_schema=False, response_model=None)
     async def no_rest(path: str) -> HTMLResponse:

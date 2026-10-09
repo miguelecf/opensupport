@@ -15,6 +15,7 @@ from alembic.config import Config
 from alembic import command
 from app.auth.tokens import Principal
 from app.config import settings
+from app.logging_setup import RedactingFilter
 
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
@@ -186,6 +187,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Regla 4 de AGENTS.md: ningún token llega al log.
+    logging.getLogger("app").addFilter(RedactingFilter())
+    logging.getLogger("uvicorn.access").addFilter(RedactingFilter())
+    logging.getLogger("uvicorn.error").addFilter(RedactingFilter())
     parser = argparse.ArgumentParser(prog="opensupport", description="Board de tickets agent-native")
     sub = parser.add_subparsers(dest="command", required=True)
 
