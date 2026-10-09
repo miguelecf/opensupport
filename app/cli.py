@@ -15,6 +15,7 @@ from alembic.config import Config
 from alembic import command
 from app.auth.tokens import Principal
 from app.config import settings
+from app.domain.enums import EventKind
 from app.logging_setup import RedactingFilter
 
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
@@ -57,8 +58,18 @@ def cmd_init(args: argparse.Namespace) -> int:
             agent=agent,
             project_scope=[args.project] if args.project else [],
         )
+        principal = _as_principal(user.id, user.name, args.agent)
+        if args.demo:
+            from app.demo import seed
+
+            seeded = seed(db, principal)
         db.commit()
 
+    if args.demo:
+        print(
+            f"\nEjemplo cargado: ticket {seeded.get('ticket') or 'OS-001'}"
+            + (f" · sesión {seeded['session']}" if seeded.get("session") else "")
+        )
     print(f"\nBase de datos: {settings.sqlite_path}")
     print("\nConectá tu agente pegando este bloque:\n")
     print(f"── Claude Code ──\nclaude mcp add --transport http opensupport "
@@ -170,6 +181,64 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lint_stats(args: argparse.Namespace) -> int:  # noqa: ARG001 - no recibe flags
+    """Por qué rechazan los tickets los agentes.
+
+    Es el único dato que justifica cambiar los umbrales del linter, así que
+    tiene que ser visible sin abrir un SQLite a mano.
+    """
+    from sqlalchemy import desc, func, select
+
+    from app.db.base import session_scope
+    from app.domain.models import TicketEvent
+    from app.tickets.schema import (
+        MAX_ACCEPTANCE,
+        MAX_SCOPE_ITEMS,
+        MAX_STEPS,
+        MAX_TITLE,
+        MIN_OUTCOME,
+        MIN_SUMMARY,
+    )
+
+    _migrate()
+    with session_scope() as db:
+        code_expr = func.json_extract(TicketEvent.payload, "$.code")
+        count_expr = func.count(TicketEvent.id)
+        rows = (
+            db.execute(
+                select(code_expr, count_expr)
+                .where(TicketEvent.kind == EventKind.LINT_FAILED)
+                .group_by(code_expr)
+                .order_by(desc(count_expr))
+            )
+            .all()
+        )
+        total = sum(int(c) for _code, c in rows)
+
+    if not total:
+        print("Sin rechazos registrados: ningún draft falló el linter.")
+        print("Los umbrales actuales son 12 pasos / 20 criterios / 15 items de scope.")
+        return 0
+
+    print(f"Rechazos del linter: {total} en total\n")
+    width = max(len(str(c)) for _code, c in rows)
+    for code, count in rows:
+        bar = "#" * max(1, int(30 * int(count) / total))
+        print(f"  {str(code):26} {str(count):>{width}}  {bar}")
+
+    print(
+        "\nUmbrales actuales: "
+        f"{MAX_STEPS} pasos · {MAX_ACCEPTANCE} criterios · {MAX_SCOPE_ITEMS} items de scope · "
+        f"título {MAX_TITLE} · summary {MIN_SUMMARY} · outcome {MIN_OUTCOME}"
+    )
+    top = rows[0][0]
+    print(
+        f"\nLa más frecuente es {top}. Si es *_TOO_MANY o *_TOO_BIG, subí el umbral en "
+        "app/tickets/schema.py. Si es *_VAGUE o *_MISSING, el problema no es el número."
+    )
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -226,6 +295,9 @@ def main(argv: list[str] | None = None) -> int:
     p_exp.add_argument("--project", default=None)
     p_exp.add_argument("--out", default=None)
     p_exp.set_defaults(func=cmd_export)
+
+    p_ls = sub.add_parser("lint-stats", help="Por qué rechazan los tickets los agentes")
+    p_ls.set_defaults(func=cmd_lint_stats)
 
     p_srv = sub.add_parser("serve")
     p_srv.add_argument("--host", default="127.0.0.1")

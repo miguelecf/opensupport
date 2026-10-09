@@ -95,6 +95,27 @@ restartPolicyType = "ON_FAILURE"
 0 3 * * * opensupport backup
 ```
 
+## Calibrar el linter con datos
+
+```bash
+uv run opensupport lint-stats
+```
+
+Los umbrales del linter (12 pasos, 20 criterios, 15 items de scope) son un punto
+de partida, no una verdad. Cada `create_ticket` rechazado escribe un
+`ticket_events` con `kind='lint_failed'`; ese comando los agrupa.
+
+**Cómo leerlo:** la regla que domina dice dónde está el problema real.
+
+| Lo que domina | Qué hacer |
+|---|---|
+| `*_TOO_MANY`, `*_TOO_BIG` | El umbral quedó bajo. Subilo en `app/tickets/schema.py`. |
+| `*_VAGUE` | La redacción de los prompts o del skill mejoró, no el número. |
+| `*_MISSING` | El agente no entendió qué pedir. Revisá el skill. |
+| Casi nada | El linter no está molestando. Dejalo así. |
+
+Esperá **dos semanas de uso real** antes de tocar un número.
+
 ## Migraciones
 
 ```bash

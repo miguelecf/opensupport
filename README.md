@@ -15,7 +15,8 @@ uv run opensupport init --demo
 uv run opensupport serve
 ```
 
-`init --demo` crea la base, un usuario, un proyecto y un token, e imprime el
+`init --demo` crea la base, un usuario, un proyecto y un token, siembra un ticket
+de ejemplo y una sesión abierta para que el board no arranque vacío, e imprime el
 bloque de conexión para Claude Code y Codex.
 
 Después, en el chat de tu agente:
@@ -71,6 +72,27 @@ uv run opensupport export --format markdown > board.md   # para commitear
 ```
 
 Es export, no sync. OpenSupport es la fuente de verdad.
+
+## Calibrar el linter
+
+Cada borrador rechazado deja rastro. Para ver por qué se rechazan y decidir si los
+umbrales están bien:
+
+```bash
+uv run opensupport lint-stats
+```
+
+```
+Rechazos del linter: 30 en total
+
+  E_SUMMARY_MISSING          6  ######
+  E_STEPS_MISSING            6  ######
+  E_ACCEPTANCE_VAGUE         6  ######
+```
+
+Si lo que domina es `*_TOO_MANY` o `*_TOO_BIG`, el umbral quedó bajo: subilo en
+`app/tickets/schema.py`. Si domina `*_VAGUE` o `*_MISSING`, el número no es el
+problema y hay que mirar la redacción.
 
 ## Backups
 
