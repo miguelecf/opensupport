@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.mcp.server import mcp
 from app.api.web import router as web
@@ -23,7 +24,30 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-mcp_app = mcp.http_app(path="/", transport="http", stateless_http=True)
+_mcp_inner = mcp.http_app(path="/", transport="http", stateless_http=True)
+
+
+class _McpAtRoot:
+    """Sirve el transporte MCP en /mcp y en /mcp/ sin redirect.
+
+    Montado en "/mcp", Starlette responde 307 para el path sin slash antes de que
+    el app vea la request. Montándolo en "/" (al final, después de las rutas web)
+    el shim recibe el path completo y lo reduce: /mcp y /mcp/ funcionan igual, sin
+    depender de que el cliente siga redirects — que no todos lo hacen en POST.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # El transporte matchea exactamente "/". Le llega el path completo porque
+        # está montado en "/": se lo reducimos para /mcp y /mcp/.
+        if scope["type"] == "http" and scope["path"] in ("/mcp", "/mcp/"):
+            scope = dict(scope, path="/")
+        await self.app(scope, receive, send)
+
+
+mcp_app: ASGIApp = _McpAtRoot(_mcp_inner)
 
 
 @asynccontextmanager
@@ -31,7 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """El lifespan del MCP app tiene que correr: es el que inicializa su task group."""
     configure_logging()
     get_engine()
-    async with mcp_app.lifespan(app):
+    async with _mcp_inner.lifespan(app):
         yield
 
 
@@ -45,7 +69,6 @@ def create_app() -> FastAPI:
         openapi_url=None,  # No hay API pública: no exponemos un contrato JSON.
         lifespan=lifespan,
     )
-    app.mount("/mcp", mcp_app)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(web.router)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -80,6 +103,8 @@ def create_app() -> FastAPI:
             status_code=404,
         )
 
+    # El MCP va al final: matchea todo lo que no agarraron las rutas de arriba.
+    app.mount("/", mcp_app)
     return app
 
 

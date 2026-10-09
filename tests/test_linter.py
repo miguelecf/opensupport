@@ -83,7 +83,15 @@ def test_title_border(title: str, length: int) -> None:
     [
         ("Crear el módulo auth/verify.py con la función pura de verificación.", False),
         ("Mover la lógica del handler a un módulo nuevo y dedicado.", False),
-        ("Hacer que el módulo de auth quede testeable de forma aislada.", True),
+        ("Hacer que el módulo de auth quede testeable de forma aislada.", False),
+        # El inspector oficial usó este paso y el linter lo rechazó: bug real.
+        ("Verificar que aparece en el board con el codigo asignado.", False),
+        ("Comprobar que el endpoint responde igual antes y despues.", False),
+        ("Migrar el esquema de sesiones al formato nuevo.", False),
+        ("Habilitar la variable de entorno para el despliegue.", False),
+        # Tampoco estos: sustantivos, no verbos.
+        ("Refactorizacion del modulo de autenticacion completo.", True),
+        ("Prueba de integracion contra la base real.", True),
     ],
 )
 def test_step_verb_detected(step: str, expected: bool) -> None:

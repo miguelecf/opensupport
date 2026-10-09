@@ -50,6 +50,28 @@ que para un board de equipo alcanza de sobra (500 tickets ≈ 2-5 MB).
    → `app/db/base.py` intenta WAL y cae a `journal_mode=DELETE` con un warning
    en el log si no puede. Verificá con `/readyz` después del primer deploy.
 
+## Conectar un cliente MCP
+
+El server expone **streamable HTTP** en `/mcp` (también acepta `/mcp/`, sin redirect).
+Probado con JSON-RPC crudo y con `@modelcontextprotocol/inspector`, que es la
+implementación de referencia del protocolo:
+
+```bash
+uv run opensupport serve
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp \
+  --transport streamable-http --method tools/list \
+  --header "Authorization: Bearer os_..."
+```
+
+Si un cliente no conecta, revisá en este orden:
+
+1. **Sin slash.** `/mcp` y `/mcp/` funcionan, pero si un cliente muestra la URL con
+   slash y le da un 307, es un cliente que no sigue redirects en POST.
+2. **401** → token inexistente, revocado, o el header no viaja. Va como
+   `Authorization: Bearer os_...`.
+3. **Sin `Accept: text/event-stream`** → el transporte responde 406. Algunos clientes
+   lo协商 mal; FastMCP y el inspector lo hacen bien.
+
 ## Backups
 
 ```bash

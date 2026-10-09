@@ -140,6 +140,24 @@ STEP_VERBS: tuple[str, ...] = (
     "test",
 )
 
+#: Sufijos de infinitivo español. Un paso que arranca con una palabra terminada
+#: así es un verbo de acción aunque no esté en la lista: la lista fija rechazaba
+#: "Verificar que el board muestre el ticket", que es un paso perfectamente válido.
+SPANISH_VERB_SUFFIXES = ("ar", "er", "ir")
+
+#: Verbos en inglés que no se detectan por forma.
+ENGLISH_STEP_WORDS = frozenset(
+    {
+        "add", "allow", "avoid", "call", "change", "clean", "combine", "configure",
+        "convert", "copy", "create", "debug", "define", "delete", "deploy",
+        "disable", "document", "enable", "enforce", "extract", "expose", "fix",
+        "handle", "implement", "improve", "keep", "limit", "link", "make", "merge",
+        "mock", "move", "parse", "pass", "prepare", "reduce", "refactor", "rename",
+        "replace", "reuse", "rewrite", "run", "set", "simplify", "split", "store",
+        "test", "track", "unify", "update", "use", "validate", "verify", "wire",
+    }
+)
+
 VAGUE_MIN_LENGTH = 60
 
 
@@ -253,6 +271,18 @@ def _check_evidence(draft: TicketDraft, out: list[Violation]) -> None:
             )
 
 
+def _is_action_verb(word: str) -> bool:
+    """¿La primera palabra del paso es un verbo de acción?
+
+    Tres vías, en orden de confianza: lista explícita, sufijo de infinitivo
+    español (-ar/-er/-ir) y lista de inglés. La lista sola rechazaba pasos
+    legítimos que usan un verbo no contemplado, y eso traba el loop del agente.
+    """
+    if word in STEP_VERBS or word in ENGLISH_STEP_WORDS:
+        return True
+    return len(word) > 4 and word.endswith(SPANISH_VERB_SUFFIXES)
+
+
 def _check_steps(draft: TicketDraft, out: list[Violation]) -> None:
     if not draft.steps:
         out.append(
@@ -286,7 +316,7 @@ def _check_steps(draft: TicketDraft, out: list[Violation]) -> None:
             )
             continue
         first_word = text.lower().split()[0].rstrip(",.:;")
-        if not first_word.startswith(STEP_VERBS):
+        if not _is_action_verb(first_word):
             out.append(
                 _v(
                     "E_STEPS_VAGUE",
