@@ -139,6 +139,21 @@ Si agregás una tool que escriba, no te saltees `require_write()`: ahí viven el
 Identificadores, tablas y columnas en **inglés**. Todo lo que lee una persona o
 un agente —mensajes del linter, validaciones, UI, skill, docs— en **español**.
 
+**Mi salida también, siempre: solo inglés o español.** Nunca portugués,
+ruso, chino ni un tercero, nunca mezclados dentro de una misma frase. Elegí el
+idioma una vez por respuesta, según el mensaje del usuario, y mantenelo.
+
+El fallo típico es un fragmento corto en otro alfabeto pegado a una frase que
+venía bien, más el code-switching a mitad de párrafo. Antes de mandar una
+respuesta larga, pasala por el verificador:
+
+```bash
+python3 ~/.minimax/skills/solo-en-es/scripts/check_language.py <archivo>
+```
+
+Corrige lo que marque y volvé a correrlo. El skill vive en
+`~/.minimax/skills/solo-en-es/`.
+
 ## Más
 
 - `docs/architecture.md` — por qué cada decisión.
