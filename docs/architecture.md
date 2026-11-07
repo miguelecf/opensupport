@@ -140,3 +140,53 @@ Si el batch fuera todo-o-nada, un typo en el ítem 7 de 20 tiraría los otros 19
 Con transacciones por ítem, el agente se queda con lo que pudo hacer y recibe
 errores accionables por cada rechazo. Es la diferencia entre "el agente
 continúa" y "el agente se frena".
+## 0013 — Dos entradas: incidente y propuesta
+
+`intake_mode` separa **cómo llegó el reporte** de **qué clase de trabajo es**.
+Agregar `incident` al `TicketType` habría perdido la identidad del bug en el
+momento en que se investiga: un incidente puede ser un bug, y sigue siendo un
+bug mientras se lo diagnostica.
+
+El tipo dice *qué*; la modalidad dice *cuánto se sabe*. Con eso, un reporte sin
+acceso al repositorio entra sin inventar evidencia de código ni diagnóstico, y
+nace `open` en vez de `ready`: `ready` significa "hay objetivo, alcance y plan",
+no "alguien lo escribió".
+
+El `type` queda intacto: no se agrega una categoría técnica nueva, se agrega un
+eje de entrada.
+
+## 0014 — La resolución es tipada y el usuario recibe una respuesta
+
+Cerrar con "PR + comando" era una regla de repositorio, no de soporte: un
+problema de configuración, un workaround o una guía no tienen commit. La
+resolución tipada (`code_fix`, `configuration`, `workaround`, `guidance`)
+distingue esas salidas y, para las que no tocan código, exige una verificación
+observable en lugar de un commit inventado.
+
+`user_response` es obligatoria: es lo que el usuario lee. OpenSupport guarda la
+respuesta declarada; no garantiza que el usuario la lea. Guardarla en el
+ticket, y no en el chat, es lo que hace que otro agente o una persona puedan
+recuperarla después.
+
+## 0015 — El alcance del token se verifica en el servicio
+
+El adaptador MCP no era el lugar correcto: cada tool podía_checkear el scope a
+su manera y alguno lo iba a saltear. `_scope_denied` vive en
+`tickets/service.py` y lo usan todas las mutaciones, incluidas las que no son
+"crear ticket": comentar, revisar y vincular.
+
+La identidad también se resuelve en el servicio: el destino de un vínculo se
+busca **dentro del proyecto del origen**, porque los códigos se repiten entre
+proyectos y un `OS-001` de otro proyecto no es el que se quiso vincular.
+
+## 0016 — La DB se toca en un hilo, también en la web
+
+Las vistas web eran async y pegaban a la sesión de SQLAlchemy desde la
+corrutina: eso bloquea el event loop y hace que el MCP y la web se pelen por el
+mismo hilo. Ahora la web usa el mismo patrón que el MCP: un closure corre
+dentro de `to_thread.run_sync` con su propia transacción.
+
+El CSRF se acepta por header (lo que manda htmx) o por campo de formulario (lo
+que manda un POST de HTML normal): antes, los formularios de la web no
+funcionaban en un navegador real, y la suite no lo cubría porque mandaba el
+header a mano.

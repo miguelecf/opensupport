@@ -96,7 +96,9 @@ def _resolve(
         return None, _ambiguous(db, code)
     return None, tickets.Result(
         ok=False,
-        violations=[_v("E_UNKNOWN_SESSION", "code", f"La sesión '{code}' no existe.", "Usá list_sessions.")],
+        violations=[
+            _v("E_UNKNOWN_SESSION", "code", f"La sesión '{code}' no existe.", "Usá list_sessions.")
+        ],
     )
 
 
@@ -119,7 +121,9 @@ def join_session(
     _add_participant(db, row.id, principal, role)
     participants = [
         {"kind": "agent" if p.agent_id else "user", "role": p.role, "id": p.agent_id or p.user_id}
-        for p in db.scalars(select(SessionParticipant).where(SessionParticipant.session_id == row.id))
+        for p in db.scalars(
+            select(SessionParticipant).where(SessionParticipant.session_id == row.id)
+        )
     ]
     session_tickets = [
         {
@@ -158,19 +162,31 @@ def close_session(
         assert error is not None  # _resolve siempre devuelve el error si no hay sesión
         return error
     if row.status == SessionStatus.CLOSED:
-        return tickets.Result(ok=True, data={"code": row.code, "status": row.status, "tickets_count": 0})
-    count = len([t for t in repo.list_tickets(db, project=_slug(db, row.project_id), limit=500) if t.session_id == row.id])
+        return tickets.Result(
+            ok=True, data={"code": row.code, "status": row.status, "tickets_count": 0}
+        )
+    count = len(
+        [
+            t
+            for t in repo.list_tickets(db, project=_slug(db, row.project_id), limit=500)
+            if t.session_id == row.id
+        ]
+    )
     row.status = SessionStatus.CLOSED
     row.closed_at = utcnow()
-    return tickets.Result(ok=True, data={"code": row.code, "status": row.status, "tickets_count": count})
+    return tickets.Result(
+        ok=True, data={"code": row.code, "status": row.status, "tickets_count": count}
+    )
 
 
 def list_sessions(
     db: OrmSession, project: str | None = None, status: str | None = None, limit: int = 20
 ) -> list[dict[str, Any]]:
-    rows = repo.open_sessions(db) if status is None else [
-        r for r in repo.open_sessions(db) if r.status == status
-    ]
+    rows = (
+        repo.open_sessions(db)
+        if status is None
+        else [r for r in repo.open_sessions(db) if r.status == status]
+    )
     out = []
     for row in rows:
         if project and _slug(db, row.project_id) != project:

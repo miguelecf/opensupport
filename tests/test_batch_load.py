@@ -57,7 +57,9 @@ def test_one_bad_item_among_100_keeps_the_99(session: OrmSession, principal) -> 
             drafts.append(make_invalid_draft(external_key=f"carga2:{i}"))
         else:
             drafts.append(
-                make_valid_draft(external_key=f"carga2:{i}", title=f"Ticket {i} con detalle suficiente")
+                make_valid_draft(
+                    external_key=f"carga2:{i}", title=f"Ticket {i} con detalle suficiente"
+                )
             )
     results = service.create_tickets_batch(session, principal, drafts)
     assert len(results) == 100
@@ -74,7 +76,9 @@ def test_bad_items_are_interleaved_not_just_last(session: OrmSession, principal)
     drafts = [
         make_invalid_draft(external_key=f"carga3:{i}")
         if i in bad_at
-        else make_valid_draft(external_key=f"carga3:{i}", title=f"Ticket {i} con detalle suficiente")
+        else make_valid_draft(
+            external_key=f"carga3:{i}", title=f"Ticket {i} con detalle suficiente"
+        )
         for i in range(100)
     ]
     results = service.create_tickets_batch(session, principal, drafts)

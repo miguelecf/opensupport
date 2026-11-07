@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Board</h1>
+<div class="page-head">
+  <h1>Board</h1>
+  <p>Tickets agrupados por proyecto. Filtrá por texto, estado o responsable.</p>
+</div>
+
 <form class="filters" method="get" action="/"
       hx-get="/_ui/board" hx-target="#board" hx-trigger="change, submit, every 20s">
   <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="buscar texto…">
@@ -12,7 +16,7 @@
   </select>
   <select name="project">
     <option value="">cualquier proyecto</option>
-    {% for p in projects %}<option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    {% for p in projects %}<option value="{{ p.slug }}" {% if filters.project == p.slug %}selected{% endif %}>{{ p.slug }}</option>{% endfor %}
   </select>
   <input type="text" name="owner" value="{{ filters.owner or '' }}" placeholder="responsable" size="12">
   <input type="text" name="tag" value="{{ filters.tag or '' }}" placeholder="tag" size="10">

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Tokens de agente</h1>
-{% if request.query_params.get('new') %}
+{% if new_token %}
 <div class="notice">
   <strong>Copiá este token ahora — no se vuelve a mostrar:</strong>
-  <pre class="token">{{ request.query_params.get('new') }}</pre>
+  <pre class="token">{{ new_token }}</pre>
 </div>
 {% endif %}
-<table class="board">
+<div class="table-wrap"><table class="admin">
   <thead><tr><th>Nombre</th><th>Agente</th><th>Proyectos</th><th>Scopes</th><th>Creado</th><th></th></tr></thead>
   <tbody>
   {% for t in tokens %}
@@ -19,16 +19,18 @@
       <td class="muted">{{ t.created_at.strftime('%d/%m %H:%M') }}</td>
       <td>
         <form method="post" action="/settings/tokens/{{ t.id }}/revoke" class="inline">
+          {{ csrf_field(csrf_token) }}
           <button class="warn">revocar</button>
         </form>
       </td>
     </tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 
 <h2>Crear token</h2>
 <form method="post" action="/settings/tokens" class="stack">
+  {{ csrf_field(csrf_token) }}
   <label>Nombre del token <input type="text" name="name" required></label>
   <label>Nombre del agente <input type="text" name="agent_name" placeholder="claude-code-fede"></label>
   <label>Cliente

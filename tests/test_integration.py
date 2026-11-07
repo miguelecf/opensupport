@@ -39,13 +39,17 @@ EXPECTED_TOOLS = {
     "close_session",
     "list_sessions",
     "get_ticket",
+    "get_ticket_activity",
     "list_tickets",
+    "list_projects",
+    "get_project",
     "search_tickets",
     "get_schema",
 }
 
 EXPECTED_RESOURCES = {
     "opensupport://skill/ticket-authoring",
+    "opensupport://workflow/support",
     "opensupport://schema/ticket",
     "opensupport://schema/violations",
     "opensupport://board/snapshot",
@@ -81,8 +85,13 @@ def live_server(tmp_path_factory) -> Iterator[str]:  # noqa: ANN001
     cfg.set_main_option("sqlalchemy.url", url)
     command.upgrade(cfg, "head")
 
+    # Una app propia: el lifespan de FastMCP abre un task group, y un
+    # TestClient que entra y sale sobre la app global lo deja sin inicializar.
+    from app.main import create_app
+
+    live_app = create_app()
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(live_app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -106,9 +115,7 @@ def live_token(live_server: str) -> str:
         if db.query(Project).filter(Project.slug == "mi-tesis").one_or_none() is None:
             db.add(Project(slug="mi-tesis", name="Mi tesis"))
             db.flush()
-        plain, _ = create_token(
-            db, user=user, name="test-token", project_scope=["mi-tesis"]
-        )
+        plain, _ = create_token(db, user=user, name="test-token", project_scope=["mi-tesis"])
         db.commit()
     return plain
 
@@ -246,12 +253,18 @@ def test_session_join_sees_other_agents_tickets(live_server: str, live_token: st
             await c.call_tool("join_session", {"code": session})
             await c.call_tool(
                 "create_tickets_batch",
-                {"items": [make_valid_draft(external_key="e2e:sesion-1").model_dump(mode="json")],
-                 "session": session},
+                {
+                    "items": [
+                        make_valid_draft(external_key="e2e:sesion-1").model_dump(mode="json")
+                    ],
+                    "session": session,
+                },
             )
             context = await c.call_tool("join_session", {"code": session})
             assert context.data["read_only"] is False
-            assert any(t["external_key"] if "external_key" in t else True for t in context.data["tickets"])
+            assert any(
+                t["external_key"] if "external_key" in t else True for t in context.data["tickets"]
+            )
             assert len(context.data["tickets"]) == 1
 
     _run(check())
@@ -271,9 +284,7 @@ def test_read_only_token_cannot_write(live_server: str) -> None:
             listing = await c.call_tool("list_tickets", {"limit": 5})
             assert listing.data["ok"] is True
             with pytest.raises(ToolError):
-                await c.call_tool(
-                    "create_ticket", make_valid_draft().model_dump(mode="json")
-                )
+                await c.call_tool("create_ticket", make_valid_draft().model_dump(mode="json"))
 
     _run(check())
 
@@ -339,8 +350,11 @@ def test_ticket_detail_renders_all_sections(web_client: TestClient) -> None:
             db.add(Project(slug="mi-tesis", name="Mi tesis", created_at=utcnow()))
             db.flush()
         principal = Principal(
-            user_id=user.id, username=user.name, is_admin=True,
-            scopes=["tickets:read", "tickets:write"], project_scope=[],
+            user_id=user.id,
+            username=user.name,
+            is_admin=True,
+            scopes=["tickets:read", "tickets:write"],
+            project_scope=[],
         )
         code = service.create_ticket(db, principal, make_valid_draft()).data["code"]
     response = web_client.get(f"/t/{code}")
@@ -385,8 +399,11 @@ def test_github_export_shape(db_url: str) -> None:
         db.add(Project(slug="mi-tesis", name="Mi tesis"))
         db.flush()
         principal = Principal(
-            user_id=user.id, username=user.name, is_admin=True,
-            scopes=["tickets:read", "tickets:write"], project_scope=[],
+            user_id=user.id,
+            username=user.name,
+            is_admin=True,
+            scopes=["tickets:read", "tickets:write"],
+            project_scope=[],
         )
         service.create_ticket(db, principal, make_valid_draft())
         out = export_github_markdown(db)
@@ -410,11 +427,173 @@ def test_markdown_export_contains_board(db_url: str) -> None:
         db.add(Project(slug="mi-tesis", name="Mi tesis"))
         db.flush()
         principal = Principal(
-            user_id=user.id, username=user.name, is_admin=True,
-            scopes=["tickets:read", "tickets:write"], project_scope=[],
+            user_id=user.id,
+            username=user.name,
+            is_admin=True,
+            scopes=["tickets:read", "tickets:write"],
+            project_scope=[],
         )
         service.create_ticket(db, principal, make_valid_draft())
         out = export_markdown(db)
 
     assert "# Board de OpenSupport" in out
     assert "OS-001" in out
+
+
+# --------------------------------------------------------------------------- #
+# Recorridos completos contra el servidor real
+# --------------------------------------------------------------------------- #
+
+
+def test_recorrido_de_incidente_hasta_la_resolucion(live_server: str, live_token: str) -> None:
+    """Recorrido A: descubrir, reportar sin código, completar, resolver.
+
+    Es el camino que hace un agente sin acceso al repo: reportar, investigar,
+    promover, resolver y dejar la respuesta para el usuario.
+    """
+
+    async def check() -> None:
+        async with Client(live_server, auth=live_token) as c:
+            # 1. Descubrir el proyecto.
+            proyectos = await c.call_tool("list_projects", {"query": "mi-tesis"})
+            assert proyectos.data["count"] == 1
+            assert proyectos.data["items"][0]["permissions"]["write"] is True
+
+            # 2. Consultar lo que ya hay.
+            tickets = await c.call_tool("list_tickets", {"project": "mi-tesis"})
+            assert tickets.data["ok"] is True
+            assert all(t["project"] == "mi-tesis" for t in tickets.data["items"])
+
+            # 3. Reportar un incidente sin acceso al repo.
+            from tests.fakes.valid_draft import make_incident_draft
+
+            incidente = make_incident_draft().model_dump(mode="json")
+            creado = await c.call_tool("create_ticket", incidente)
+            assert creado.data["ok"] is True
+            code = creado.data["code"]
+            assert creado.data["ticket_status"] == "open"
+
+            # 4. El workflow dice qué falta para poder trabajarlo.
+            detalle = await c.call_tool("get_ticket", {"code": code, "project": "mi-tesis"})
+            faltantes = {
+                m["field"] for m in detalle.data["ticket"]["workflow"]["missing_for_ready"]
+            }
+            assert {"outcome", "scope.include", "steps"} <= faltantes
+
+            # 5. Promover sin completar no se puede.
+            intento = await c.call_tool("set_status", {"code": code, "status": "ready"})
+            assert intento.data["ok"] is False
+            assert intento.data["violations"][0]["code"] == "E_PROMOTION_NOT_READY"
+
+            # 6. Completar el contexto y promover.
+            await c.call_tool(
+                "update_ticket",
+                {
+                    "code": code,
+                    "project": "mi-tesis",
+                    "patch": {
+                        "outcome": (
+                            "La sesión móvil dura una hora como en la versión 1.3 y no "
+                            "redirige al login al volver al foreground."
+                        ),
+                        "steps": [
+                            "Revisar el TTL del token en el cliente móvil.",
+                            "Comparar la configuración de refresh entre 1.3 y 1.4.",
+                        ],
+                        "scope": {
+                            "include": ["configuración de sesión del cliente móvil"],
+                            "exclude": [],
+                        },
+                    },
+                },
+            )
+            promovido = await c.call_tool("set_status", {"code": code, "status": "ready"})
+            assert promovido.data["ok"] is True
+
+            # 7. Un agente deja el contexto y otro lo recupera.
+            await c.call_tool(
+                "add_comment",
+                {"code": code, "body": "El TTL cambió en el commit del cliente 1.4."},
+            )
+            actividad = await c.call_tool(
+                "get_ticket_activity", {"code": code, "project": "mi-tesis"}
+            )
+            cuerpos = [i.get("body") for i in actividad.data["items"]]
+            assert "El TTL cambió en el commit del cliente 1.4." in cuerpos
+            assert actividad.data["total"] >= 3
+
+            # 8. Resolver sin cambio de código, con verificación observable.
+            await c.call_tool("set_status", {"code": code, "status": "in_progress"})
+            cerrado = await c.call_tool(
+                "close_ticket",
+                {
+                    "code": code,
+                    "project": "mi-tesis",
+                    "resolution": {
+                        "kind": "configuration",
+                        "summary": "Se corrigió el TTL del cliente móvil.",
+                        "user_response": "Actualizá la app a la 1.4.1: la sesión dura una hora.",
+                        "verifications": [
+                            {
+                                "result": "La sesión sigue viva a los 10 minutos",
+                                "command": "pytest movil",
+                            }
+                        ],
+                    },
+                },
+            )
+            assert cerrado.data["ok"] is True
+            assert cerrado.data["status"] == "done"
+
+            # 9. La respuesta al usuario queda guardada, no en el chat.
+            final = await c.call_tool("get_ticket", {"code": code, "project": "mi-tesis"})
+            assert final.data["ticket"]["verification"]["user_response"]
+            assert final.data["ticket"]["verification"]["kind"] == "configuration"
+
+    _run(check())
+
+
+def test_recorrido_de_implementacion_conserva_el_contrato(
+    live_server: str, live_token: str
+) -> None:
+    """Recorrido B: el borrador histórico nace ready y se cierra con PR."""
+
+    async def check() -> None:
+        async with Client(live_server, auth=live_token) as c:
+            draft = make_valid_draft(external_key="e2e:recorrido-b").model_dump(mode="json")
+            creado = await c.call_tool("create_ticket", draft)
+            assert creado.data["ok"] is True
+            assert creado.data["ticket_status"] == "ready"
+            code = creado.data["code"]
+
+            # Un reintento no duplica.
+            reintento = await c.call_tool("create_ticket", draft)
+            assert reintento.data["code"] == code
+
+            await c.call_tool("set_status", {"code": code, "status": "in_progress"})
+            cerrado = await c.call_tool(
+                "close_ticket",
+                {
+                    "code": code,
+                    "pr": "https://example.test/pr/7",
+                    "commands": ["uv run pytest"],
+                },
+            )
+            assert cerrado.data["ok"] is True
+            assert cerrado.data["status"] == "done"
+
+    _run(check())
+
+
+def test_la_busqueda_puede_acotarse_por_proyecto(live_server: str, live_token: str) -> None:
+    async def check() -> None:
+        async with Client(live_server, auth=live_token) as c:
+            draft = make_valid_draft(external_key="e2e:busqueda").model_dump(mode="json")
+            await c.call_tool("create_ticket", draft)
+            hits = await c.call_tool("search_tickets", {"query": "JWT", "project": "mi-tesis"})
+            assert hits.data["items"]
+            assert all(i["project"] == "mi-tesis" for i in hits.data["items"])
+            otros = await c.call_tool("search_tickets", {"query": "JWT", "project": "no-existe"})
+            assert otros.data["items"] == []
+
+    _run(check())

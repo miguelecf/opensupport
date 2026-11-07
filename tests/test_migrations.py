@@ -57,9 +57,9 @@ def test_fts_table_and_triggers_exist(migrated: str) -> None:
     assert "tickets_fts" in names
     triggers = {
         row[0]
-        for row in engine.connect().execute(
-            text("SELECT name FROM sqlite_master WHERE type='trigger'")
-        ).all()
+        for row in engine.connect()
+        .execute(text("SELECT name FROM sqlite_master WHERE type='trigger'"))
+        .all()
     }
     assert {"tickets_fts_ai", "tickets_fts_ad", "tickets_fts_au"} <= triggers
 
@@ -103,25 +103,35 @@ def test_check_constraints_reject_both_identities(migrated: str) -> None:
     engine = create_engine(migrated)
     with engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO users (id,name,is_admin,next_ticket_seq,created_at) VALUES (1,'a',0,1,'2026-01-01')")
+            text(
+                "INSERT INTO users (id,name,is_admin,next_ticket_seq,created_at) VALUES (1,'a',0,1,'2026-01-01')"
+            )
         )
         conn.execute(
-            text("INSERT INTO agents (id,user_id,name,client,created_at) VALUES (1,1,'ag','other','2026-01-01')")
+            text(
+                "INSERT INTO agents (id,user_id,name,client,created_at) VALUES (1,1,'ag','other','2026-01-01')"
+            )
         )
         conn.execute(
-            text("INSERT INTO sessions (code,project_id,title,goal,status,created_by_user_id,created_at) "
-                 "VALUES ('PLN-001',1,'t','g','open',1,'2026-01-01')")
+            text(
+                "INSERT INTO sessions (code,project_id,title,goal,status,created_by_user_id,created_at) "
+                "VALUES ('PLN-001',1,'t','g','open',1,'2026-01-01')"
+            )
         )
         conn.execute(
-            text("INSERT INTO projects (id,slug,name,next_session_seq,next_ticket_seq,created_at) "
-                 "VALUES (1,'p','P',1,1,'2026-01-01')")
+            text(
+                "INSERT INTO projects (id,slug,name,next_session_seq,next_ticket_seq,created_at) "
+                "VALUES (1,'p','P',1,1,'2026-01-01')"
+            )
         )
     with pytest.raises(IntegrityError):
         with engine.begin() as conn:
             # session_participants con user_id Y agent_id a la vez viola el CHECK.
             conn.execute(
-                text("INSERT INTO session_participants (session_id,user_id,agent_id,role,joined_at) "
-                     "VALUES (1,1,1,'contributor','2026-01-01')")
+                text(
+                    "INSERT INTO session_participants (session_id,user_id,agent_id,role,joined_at) "
+                    "VALUES (1,1,1,'contributor','2026-01-01')"
+                )
             )
 
 

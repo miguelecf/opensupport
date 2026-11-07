@@ -16,37 +16,52 @@ uv run opensupport serve
 ```
 
 `init --demo` crea la base, un usuario, un proyecto y un token, siembra un ticket
-de ejemplo y una sesión abierta para que el board no arranque vacío, e imprime el
-bloque de conexión para Claude Code y Codex.
+de ejemplo, un incidente de ejemplo y una sesión abierta para que el board no
+arranque vacío, e imprime el bloque de conexión para Claude Code, Codex y Pi.
 
 Después, en el chat de tu agente:
 
-> Conectate a opensupport, leé `opensupport://skill/ticket-authoring`,
-> recorré este repo y creá los tickets que falten.
+> Conectate a opensupport, leé `opensupport://skill/ticket-authoring` y
+> `opensupport://workflow/support`, recorré este repo y creá los tickets que falten.
 
 Eso es todo. Sin archivos que copiar, sin variables de entorno que descubrir.
 
 ## Cómo se usa
 
 ```
-resources/read opensupport://skill/ticket-authoring   ← el contrato
-search_tickets("lo que busco")                        ← ¿ya existe?
-lint_ticket(borrador)                                 ← no persiste nada
+list_projects(query="mi-tesis")                          ← ¿en qué proyecto estoy?
+search_tickets("lo que busco", project="mi-tesis")       ← ¿ya existe?
+lint_ticket(borrador)                                    ← no persiste nada
   └─ corregir hasta ok: true
-create_ticket(borrador)                               ← recién acá persiste
+create_ticket(borrador)                                  ← recién acá persiste
 ```
+
+Hay dos entradas:
+
+- **`intake_mode="implementation"`** (default): leíste el repo y sabés qué
+  cambiar. Nace `ready`.
+- **`intake_mode="incident"`**: reportás un problema con síntoma y evidencia
+  observable, con o sin acceso al repo. Nace `open` y se completa después.
 
 Cuando implementás:
 
 ```
 set_status(code, "in_progress")
-close_ticket(code, pr="https://github.com/...", commands=["uv run pytest"])
+close_ticket(code, resolution={"kind": "code_fix", "summary": "...", "user_response": "...", "pr": "https://github.com/...", "commands": ["uv run pytest"]})
 ```
+
+Un ticket de soporte que no cambió código también se cierra: con `kind`
+`configuration`, `workaround` o `guidance` y una verificación observable. Lo que
+no se puede es cerrarlo sin evidencia ni sin respuesta para el usuario.
 
 ## La web
 
 `http://127.0.0.1:8000` — login con un token. Board, detalle, sesiones, tokens y
 proyectos. HTML + HTMX, sin build step.
+
+El detalle de un ticket muestra el contexto de soporte, la evidencia tipada, la
+actividad, la resolución y la respuesta final. Los formularios llevan CSRF en el
+cuerpo, y el token nuevo se muestra una sola vez, fuera de la URL.
 
 No hay API REST. Las máquinas usan MCP (`/mcp`); la web es una interfaz para
 humanos, no un contrato programable. `/api/v1/*` responde 404 a propósito.
@@ -116,6 +131,7 @@ uv run opensupport restore data/backups/opensupport-20261008-120000.db
 ```bash
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy app
 ```
 

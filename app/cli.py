@@ -45,7 +45,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         from app.tickets.service import ensure_agent
 
         user = ensure_user(db, args.user, is_admin=True)
-        agent = ensure_agent(db, _as_principal(user.id, user.name, args.user), args.agent, "claude_code")
+        agent = ensure_agent(
+            db, _as_principal(user.id, user.name, args.user), args.agent, "claude_code"
+        )
         if args.project:
             exists = db.query(Project).filter(Project.slug == args.project).one_or_none()
             if exists is None:
@@ -72,15 +74,22 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
     print(f"\nBase de datos: {settings.sqlite_path}")
     print("\nConectá tu agente pegando este bloque:\n")
-    print(f"── Claude Code ──\nclaude mcp add --transport http opensupport "
-          f"{args.host}/mcp \\\n  --header \"Authorization: Bearer {plain}\"\n")
+    print(
+        f"── Claude Code ──\nclaude mcp add --transport http opensupport "
+        f'{args.host}/mcp \\\n  --header "Authorization: Bearer {plain}"\n'
+    )
     print(f"── Codex ──\nexport OPENSUPPORT_TOKEN={plain}")
     print("# en ~/.codex/config.toml:\n[mcp_servers.opensupport]")
     print(f'url = "{args.host}/mcp"\nbearer_token_env_var = "OPENSUPPORT_TOKEN"\n')
+    print(f"── Pi ──\nexport OPENSUPPORT_TOKEN={plain}")
+    print(
+        f"pi mcp add opensupport --url {args.host}/mcp --bearer-token-env-var OPENSUPPORT_TOKEN\n"
+    )
     print(f"Token: {plain}   (solo se muestra una vez)\n")
     print("Después, en el chat del agente:")
-    print('  "Conectate a opensupport, leé opensupport://skill/ticket-authoring,')
-    print('   recorré este repo y creá los tickets que falten."\n')
+    print('  "Conectate a opensupport, leé opensupport://skill/ticket-authoring y')
+    print("   opensupport://workflow/support, recorré este repo y creá los tickets")
+    print('   que falten."\n')
     return 0
 
 
@@ -204,15 +213,12 @@ def cmd_lint_stats(args: argparse.Namespace) -> int:  # noqa: ARG001 - no recibe
     with session_scope() as db:
         code_expr = func.json_extract(TicketEvent.payload, "$.code")
         count_expr = func.count(TicketEvent.id)
-        rows = (
-            db.execute(
-                select(code_expr, count_expr)
-                .where(TicketEvent.kind == EventKind.LINT_FAILED)
-                .group_by(code_expr)
-                .order_by(desc(count_expr))
-            )
-            .all()
-        )
+        rows = db.execute(
+            select(code_expr, count_expr)
+            .where(TicketEvent.kind == EventKind.LINT_FAILED)
+            .group_by(code_expr)
+            .order_by(desc(count_expr))
+        ).all()
         total = sum(int(c) for _code, c in rows)
 
     if not total:
@@ -260,7 +266,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("app").addFilter(RedactingFilter())
     logging.getLogger("uvicorn.access").addFilter(RedactingFilter())
     logging.getLogger("uvicorn.error").addFilter(RedactingFilter())
-    parser = argparse.ArgumentParser(prog="opensupport", description="Board de tickets agent-native")
+    parser = argparse.ArgumentParser(
+        prog="opensupport", description="Board de tickets agent-native"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="Crea la DB y deja un token listo")

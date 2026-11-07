@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session as OrmSession
 
-from app.demo import DEMO_TICKET_KEY, demo_draft, seed
+from app.demo import DEMO_TICKET_KEY, demo_draft, demo_incident_draft, seed
 from app.tickets.linter import errors, lint
 from app.tickets.schema import MAX_ACCEPTANCE, MAX_SCOPE_ITEMS, MAX_STEPS
 
@@ -17,6 +17,15 @@ ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 def test_demo_draft_passes_our_own_linter() -> None:
     """Si el ejemplo no pasa el linter, el ejemplo miente."""
     assert lint(demo_draft()) == []
+
+
+def test_el_incidente_de_demo_pasa_el_linter() -> None:
+    """El ejemplo de incidente también tiene que pasar el contrato.
+
+    Sin errores: el incidente no dice cuál es el resultado esperado, y eso es
+    una advertencia, no un rechazo.
+    """
+    assert errors(lint(demo_incident_draft())) == []
 
 
 def test_demo_draft_is_under_the_thresholds() -> None:
@@ -33,12 +42,24 @@ def test_seed_creates_ticket_and_session(session: OrmSession, principal) -> None
     assert result["session"] == "PLN-001"
 
 
+def test_la_demo_muestra_los_dos_casos(session: OrmSession, principal) -> None:  # noqa: ANN001
+    """Una propuesta investigada y un incidente: las dos entradas del contrato."""
+    from app.tickets import repository as repo
+
+    result = seed(session, principal)
+    assert result["incident"] == "OS-002"
+    incidente = repo.get_ticket_by_code(session, "OS-002")
+    assert incidente is not None
+    assert incidente.status == "open"
+    assert incidente.intake_mode == "incident"
+
+
 def test_seed_is_idempotent(session: OrmSession, principal) -> None:  # noqa: ANN001
     seed(session, principal)
     second = seed(session, principal)
     from app.domain.models import Ticket
 
-    assert session.query(Ticket).count() == 1
+    assert session.query(Ticket).count() == 2
     assert second["ticket"] is not None
 
 

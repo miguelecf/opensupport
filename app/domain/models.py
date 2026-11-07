@@ -23,6 +23,7 @@ from app.db.base import Base
 from app.domain.enums import (
     AgentClient,
     EventKind,
+    IntakeMode,
     LinkKind,
     ParticipantRole,
     Priority,
@@ -131,8 +132,12 @@ class SessionParticipant(Base):
     session_id: Mapped[int] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True
     )
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), default=None)
-    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), default=None)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
+    agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), default=None
+    )
     role: Mapped[str] = mapped_column(String(16), default=ParticipantRole.CONTRIBUTOR)
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -153,7 +158,9 @@ class Ticket(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(32))
-    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), index=True
+    )
     session_id: Mapped[int | None] = mapped_column(
         ForeignKey("sessions.id", ondelete="SET NULL"), default=None, index=True
     )
@@ -169,6 +176,10 @@ class Ticket(Base):
     type: Mapped[str] = mapped_column(String(16), default=TicketType.FEATURE)
     priority: Mapped[str] = mapped_column(String(4), default=Priority.P2)
     status: Mapped[str] = mapped_column(String(16), default=TicketStatus.READY)
+    intake_mode: Mapped[str] = mapped_column(
+        String(16), default=IntakeMode.IMPLEMENTATION, server_default="implementation"
+    )
+    support_context: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
     title: Mapped[str] = mapped_column(String(200))
     summary: Mapped[str] = mapped_column(Text)
@@ -206,7 +217,9 @@ class TicketLink(Base):
     from_ticket_id: Mapped[int] = mapped_column(
         ForeignKey("tickets.id", ondelete="CASCADE"), index=True
     )
-    to_ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
+    to_ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("tickets.id", ondelete="CASCADE"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(16), default=LinkKind.RELATES_TO)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -252,6 +265,9 @@ class Comment(Base):
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    author_user: Mapped[User | None] = relationship()
+    author_agent: Mapped[Agent | None] = relationship()
+
 
 class TicketEvent(Base):
     __tablename__ = "ticket_events"
@@ -271,3 +287,6 @@ class TicketEvent(Base):
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    actor_user: Mapped[User | None] = relationship()
+    actor_agent: Mapped[Agent | None] = relationship()

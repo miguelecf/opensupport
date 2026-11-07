@@ -12,7 +12,7 @@
 <h2>Tickets de la sesión</h2>
 {% if ctx.tickets %}
 <ul>{% for t in ctx.tickets %}
-  <li><a href="/t/{{ t.code }}?project={{ project }}"><code>{{ t.code }}</code></a> [{{ t.status }}] {{ t.title }}</li>
+  <li><a href="/t/{{ t.code }}?project={{ project or ctx.project }}"><code>{{ t.code }}</code></a> [{{ t.status }}] {{ t.title }}</li>
 {% endfor %}</ul>
 {% else %}
 <p class="muted">Todavía no hay tickets. Un agente puede aportar con <code>create_tickets_batch(session="{{ ctx.code }}")</code>.</p>

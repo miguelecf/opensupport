@@ -1,5 +1,11 @@
 # OpenSupport — plan de implementación
 
+> **Documento histórico.** Describe el plan original de construcción, no el
+> estado actual del producto. Para lo que el contrato es hoy, mirá
+> `docs/ticket-contract.md`, `app/skill/ticket-authoring.md` y
+> `app/skill/support-workflow.md`. Las decisiones que cambiaron después están
+> en `docs/architecture.md` (0013 a 0016).
+
 ## Summary
 
 **Objetivo.** Construir `OpenSupport`: un servidor pequeño, single-tenant, *agent-native* para que un equipo de programadores converja tickets de trabajo de alta calidad generados por sus propios agentes de código. Un agente (Claude Code, Codex, OpenCode, cualquier cliente MCP) recorre **su** proyecto local, y en vez de dejar el análisis en un chat que se pierde, postea tickets estructurados, validados y versionados contra `OpenSupport` vía **MCP**. La app **no tiene LLM**: valida de forma determinista, guarda, y devuelve al agente errores accionables. Un humano abre la web (FastAPI + Jinja2 + HTMX) para leer, triagear y comentar.

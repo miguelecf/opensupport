@@ -28,7 +28,9 @@ def upgrade() -> None:
     op.create_table(
         "agents",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("name", sa.String(64), nullable=False, unique=True),
         sa.Column("client", sa.String(32), nullable=False, server_default="other"),
         sa.Column("model_reported", sa.String(64)),
@@ -40,7 +42,9 @@ def upgrade() -> None:
     op.create_table(
         "api_tokens",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="CASCADE")),
         sa.Column("name", sa.String(64), nullable=False),
         sa.Column("token_hash", sa.String(64), nullable=False, unique=True),
@@ -68,12 +72,22 @@ def upgrade() -> None:
         "sessions",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("code", sa.String(32), nullable=False),
-        sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.Integer(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.UniqueConstraint("project_id", "code", name="uq_session_project_code"),
         sa.Column("title", sa.String(200), nullable=False),
         sa.Column("goal", sa.Text(), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="open"),
-        sa.Column("created_by_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column(
+            "created_by_user_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("closed_at", sa.DateTime(timezone=True)),
     )
@@ -82,13 +96,19 @@ def upgrade() -> None:
     op.create_table(
         "session_participants",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("session_id", sa.Integer(), sa.ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "session_id",
+            sa.Integer(),
+            sa.ForeignKey("sessions.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE")),
         sa.Column("agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="CASCADE")),
         sa.Column("role", sa.String(16), nullable=False, server_default="contributor"),
         sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
-            "(user_id IS NOT NULL) != (agent_id IS NOT NULL)", name="ck_participant_exactly_one_identity"
+            "(user_id IS NOT NULL) != (agent_id IS NOT NULL)",
+            name="ck_participant_exactly_one_identity",
         ),
         sa.UniqueConstraint("session_id", "user_id", name="uq_participant_session_user"),
         sa.UniqueConstraint("session_id", "agent_id", name="uq_participant_session_agent"),
@@ -99,9 +119,19 @@ def upgrade() -> None:
         "tickets",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("code", sa.String(32), nullable=False, unique=True),
-        sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.Integer(),
+            sa.ForeignKey("projects.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
         sa.Column("session_id", sa.Integer(), sa.ForeignKey("sessions.id", ondelete="SET NULL")),
-        sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column(
+            "owner_user_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
         sa.Column("author_agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="SET NULL")),
         sa.Column("author_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL")),
         sa.Column("external_key", sa.String(200)),
@@ -133,8 +163,18 @@ def upgrade() -> None:
     op.create_table(
         "ticket_links",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("from_ticket_id", sa.Integer(), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("to_ticket_id", sa.Integer(), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "from_ticket_id",
+            sa.Integer(),
+            sa.ForeignKey("tickets.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "to_ticket_id",
+            sa.Integer(),
+            sa.ForeignKey("tickets.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("kind", sa.String(16), nullable=False, server_default="relates_to"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("from_ticket_id", "to_ticket_id", "kind", name="uq_link_once"),
@@ -146,9 +186,16 @@ def upgrade() -> None:
     op.create_table(
         "ticket_reviews",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "ticket_id",
+            sa.Integer(),
+            sa.ForeignKey("tickets.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("reviewer_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE")),
-        sa.Column("reviewer_agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="CASCADE")),
+        sa.Column(
+            "reviewer_agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="CASCADE")
+        ),
         sa.Column("verdict", sa.String(24), nullable=False),
         sa.Column("note", sa.Text()),
         sa.Column("ticket_content_hash", sa.String(64), nullable=False),
@@ -163,7 +210,12 @@ def upgrade() -> None:
     op.create_table(
         "comments",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "ticket_id",
+            sa.Integer(),
+            sa.ForeignKey("tickets.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("author_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE")),
         sa.Column("author_agent_id", sa.Integer(), sa.ForeignKey("agents.id", ondelete="CASCADE")),
         sa.Column("body", sa.Text(), nullable=False),

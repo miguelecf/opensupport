@@ -11,7 +11,13 @@ from tests.fakes.valid_draft import make_valid_draft
 
 
 def test_start_session_creates_pln_code(session: OrmSession, principal) -> None:  # noqa: ANN001
-    result = sessions.start_session(session, principal, "mi-tesis", "Auth: migrar a JWT", "Que /login no use sesiones en memoria")
+    result = sessions.start_session(
+        session,
+        principal,
+        "mi-tesis",
+        "Auth: migrar a JWT",
+        "Que /login no use sesiones en memoria",
+    )
     assert result.ok
     assert result.data["code"] == "PLN-001"
 

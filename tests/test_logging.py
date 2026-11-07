@@ -10,8 +10,13 @@ from app.logging_setup import REDACTED, RedactingFilter, redact_text
 
 def _record(msg: str, headers: dict[str, str] | None = None) -> logging.LogRecord:
     return logging.LogRecord(
-        name="test", level=logging.INFO, pathname=__file__, lineno=1,
-        msg=msg, args=(), exc_info=None,
+        name="test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=msg,
+        args=(),
+        exc_info=None,
     )
 
 

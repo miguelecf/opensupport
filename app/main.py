@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from anyio import to_thread
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.mcp.server import mcp
 from app.api.web import router as web
+from app.api.web.views import csrf_field
 from app.db.base import db_integrity_check, db_is_ready, get_engine
 from app.logging_setup import configure_logging
 
@@ -23,8 +25,6 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
-
-_mcp_inner = mcp.http_app(path="/", transport="http", stateless_http=True)
 
 
 class _McpAtRoot:
@@ -47,19 +47,22 @@ class _McpAtRoot:
         await self.app(scope, receive, send)
 
 
-mcp_app: ASGIApp = _McpAtRoot(_mcp_inner)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """El lifespan del MCP app tiene que correr: es el que inicializa su task group."""
-    configure_logging()
-    get_engine()
-    async with _mcp_inner.lifespan(app):
-        yield
-
-
 def create_app() -> FastAPI:
+    """Cada app tiene su propio transporte MCP.
+
+    El transporte abre un task group en su lifespan. Si dos apps comparten la
+    misma instancia, el ciclo de vida de una apaga el de la otra: un TestClient
+    que entra y sale deja muerto al servidor MCP de al lado.
+    """
+    mcp_inner = mcp.http_app(path="/", transport="http", stateless_http=True)
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+        configure_logging()
+        get_engine()
+        async with mcp_inner.lifespan(app):
+            yield
+
     app = FastAPI(
         title="OpenSupport",
         description="Board de tickets agent-native. Las máquinas hablan MCP, los humanos usan la web.",
@@ -67,12 +70,14 @@ def create_app() -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,  # No hay API pública: no exponemos un contrato JSON.
-        lifespan=lifespan,
+        lifespan=app_lifespan,
     )
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(web.router)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["md"] = _markdown_filter
+    templates.env.filters["highlight"] = _highlight_filter
+    templates.env.globals["csrf_field"] = csrf_field
     app.state.templates = templates
 
     @app.get("/healthz", include_in_schema=False)
@@ -81,8 +86,9 @@ def create_app() -> FastAPI:
 
     @app.get("/readyz", include_in_schema=False, response_model=None)
     async def readyz(request: Request) -> HTMLResponse | dict[str, object]:
-        ready, detail = db_is_ready()
-        integrity_ok, integrity = db_integrity_check()
+        # La readiness pega a la DB: va en un hilo, como todo acceso a disco.
+        ready, detail = await to_thread.run_sync(db_is_ready)
+        integrity_ok, integrity = await to_thread.run_sync(db_integrity_check)
         healthy = ready and integrity_ok
         if request.headers.get("accept", "").startswith("text/html"):
             body = f"ok ({detail})" if healthy else f"no: {detail}; integridad={integrity}"
@@ -104,7 +110,7 @@ def create_app() -> FastAPI:
         )
 
     # El MCP va al final: matchea todo lo que no agarraron las rutas de arriba.
-    app.mount("/", mcp_app)
+    app.mount("/", _McpAtRoot(mcp_inner))
     return app
 
 
@@ -119,6 +125,21 @@ def _markdown_filter(text: str) -> str:  # noqa: ANN201
     escaped = re.sub(r"(?m)^- (.+)$", r"<li>\1</li>", escaped)
     escaped = re.sub(r"(?m)^\d+\. (.+)$", r"<li>\1</li>", escaped)
     return escaped.replace("\n", "<br>")
+
+
+def _highlight_filter(text: str) -> str:  # noqa: ANN201
+    """Convierte los delimitadores del snippet FTS (<<...>>) en <mark> seguro.
+
+    Se escapa todo primero y recién después se inyecta la marca: el texto del
+    ticket nunca se trata como HTML, pero el resaltado de la búsqueda sí.
+    """
+    import html
+
+    from markupsafe import Markup
+
+    escaped = html.escape(text or "")
+    escaped = escaped.replace("&lt;&lt;", "<mark>").replace("&gt;&gt;", "</mark>")
+    return Markup(escaped)
 
 
 app = create_app()

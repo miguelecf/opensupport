@@ -1,30 +1,61 @@
-{% if items %}
-<table class="board">
-  <thead><tr>
-    <th>Código</th><th>Título</th><th>Estado</th><th>Tipo</th><th>Prioridad</th>
-    <th>Proyecto</th><th>Sesión</th><th>Responsable</th><th>Revisión</th><th>Actualizado</th>
-  </tr></thead>
-  <tbody>
-  {% for t in items %}
-    <tr>
-      <td><a href="/t/{{ t.code }}?project={{ t.project }}"><code>{{ t.code }}</code></a></td>
-      <td>{{ t.title }}{% if t.fragment %}<div class="frag">{{ t.fragment | safe }}</div>{% endif %}</td>
-      <td><span class="pill s-{{ t.status }}">{{ t.status }}</span></td>
-      <td>{{ t.type }}</td>
-      <td>{{ t.priority }}</td>
-      <td>{{ t.project }}</td>
-      <td>{% if t.session %}<a href="/s/{{ t.session }}?project={{ t.project }}">{{ t.session }}</a>{% else %}—{% endif %}</td>
-      <td>{{ t.owner }}</td>
-      <td>
-        {% if t.review.needs_review %}<span class="rev stale" title="Sin revisar desde el último cambio">sin revisar</span>
-        {% elif t.review.changes_requested %}<span class="rev warn">!{{ t.review.changes_requested }}</span>
-        {% else %}<span class="rev ok">✓{{ t.review.approvals }}</span>{% endif %}
-      </td>
-      <td class="muted">{{ t.updated_at.strftime('%d/%m %H:%M') if t.updated_at else '—' }}</td>
-    </tr>
+{% if groups %}
+  {% for g in groups %}
+  <section class="project-block">
+    <header class="project-head">
+      <span class="project-name">{{ g.name }}</span>
+      <span class="project-slug">{{ g.slug }}</span>
+      <div class="project-stats">
+        {% for s in ['ready','in_progress','blocked','open','done','wont'] %}
+          {% if g.status_counts.get(s) %}
+          <span class="stat"><span class="pill s-{{ s }}">{{ s }}</span><b>{{ g.status_counts[s] }}</b></span>
+          {% endif %}
+        {% endfor %}
+        {% if g.needs_review %}
+        <span class="stat review" title="Sin revisar desde el último cambio">{{ g.needs_review }} sin revisar</span>
+        {% endif %}
+      </div>
+      {% if g.description %}<div class="project-desc">{{ g.description }}</div>{% endif %}
+      {% if g.owners %}<div class="project-team">Responsables: {{ g.owners | join(', ') }}</div>{% endif %}
+    </header>
+
+    {% if g.tickets %}
+    <div class="table-wrap">
+      <table class="board">
+        <thead>
+          <tr>
+            <th>Código</th><th>Título</th><th>Estado</th><th>Tipo</th>
+            <th>Prioridad</th><th>Responsable</th><th>Sesión</th><th>Revisión</th><th>Actualizado</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for t in g.tickets %}
+          <tr>
+            <td class="code" data-label="Código"><a href="/t/{{ t.code }}?project={{ t.project }}"><code>{{ t.code }}</code></a></td>
+            <td data-label="Título">{{ t.title }}{% if t.fragment %}<div class="frag">{{ t.fragment | highlight }}</div>{% endif %}</td>
+            <td data-label="Estado"><span class="pill s-{{ t.status }}">{{ t.status }}</span></td>
+            <td data-label="Tipo">{{ t.type }}</td>
+            <td data-label="Prioridad">{{ t.priority }}</td>
+            <td data-label="Responsable">{{ t.owner }}</td>
+            <td data-label="Sesión">{% if t.session %}<a href="/s/{{ t.session }}?project={{ t.project }}">{{ t.session }}</a>{% else %}—{% endif %}</td>
+            <td data-label="Revisión">
+              {% if t.review.needs_review %}<span class="rev stale" title="Sin revisar desde el último cambio">sin revisar</span>
+              {% elif t.review.changes_requested %}<span class="rev warn">!{{ t.review.changes_requested }}</span>
+              {% else %}<span class="rev ok">✓{{ t.review.approvals }}</span>{% endif %}
+            </td>
+            <td data-label="Actualizado" class="muted">{{ t.updated_at.strftime('%d/%m %H:%M') if t.updated_at else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="project-empty">Todavía no hay tickets en este proyecto.</div>
+    {% endif %}
+  </section>
   {% endfor %}
-  </tbody>
-</table>
 {% else %}
-<p class="muted">No hay tickets que coincidan con el filtro.</p>
+  <div class="board-empty">
+    <p><strong>No hay proyectos todavía.</strong></p>
+    <p class="muted">Creá uno desde <a href="/settings/projects">Proyectos</a> y los agentes podrán postear tickets ahí.</p>
+  </div>
 {% endif %}

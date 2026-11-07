@@ -25,6 +25,37 @@ class TicketType(StrEnum):
     SECURITY = "security"
 
 
+class IntakeMode(StrEnum):
+    """Modalidad de ingreso. No es el tipo de trabajo: es cómo llegó el reporte.
+
+    Un `bug` puede entrar como incidente (alguien lo vio pasar, sin análisis)
+    o como propuesta investigada (ya se sabe qué tocar). Separar esto de
+    `TicketType` evita perder la identidad del bug mientras se investiga.
+    """
+
+    INCIDENT = "incident"
+    IMPLEMENTATION = "implementation"
+
+
+class EvidenceKind(StrEnum):
+    """Naturaleza de un item de evidencia. `code` es el histórico."""
+
+    CODE = "code"
+    OBSERVATION = "observation"
+    LOG = "log"
+    COMMAND = "command"
+    REFERENCE = "reference"
+
+
+class ResolutionKind(StrEnum):
+    """Clase de solución declarada al cerrar un ticket."""
+
+    CODE_FIX = "code_fix"
+    CONFIGURATION = "configuration"
+    WORKAROUND = "workaround"
+    GUIDANCE = "guidance"
+
+
 class Priority(StrEnum):
     P0 = "p0"
     P1 = "p1"

@@ -10,7 +10,8 @@
       <span class="tag">{{ ticket.type }}</span>
       <span class="tag">{{ ticket.priority }}</span>
       <span class="tag">proyecto: {{ ticket.project.slug }}</span>
-      {% if ticket.session %}<span class="tag">sesión: <a href="/s/{{ ticket.session.code }}?project={{ ticket.project }}">{{ ticket.session.code }}</a></span>{% endif %}
+      {% if ticket.intake_mode == 'incident' %}<span class="tag">modo: incidente</span>{% endif %}
+      {% if ticket.session %}<span class="tag">sesión: <a href="/s/{{ ticket.session.code }}?project={{ ticket.project.slug }}">{{ ticket.session.code }}</a></span>{% endif %}
       {% if ticket.external_key %}<span class="tag mono">key: {{ ticket.external_key }}</span>{% endif %}
     </div>
   </header>
@@ -23,35 +24,85 @@
   {% if ticket.problem %}<section><h2>Problema</h2><p>{{ ticket.problem | md }}</p></section>{% endif %}
   <section><h2>Resultado esperado</h2><p>{{ ticket.outcome | md }}</p></section>
 
+  {% if ticket.support_context %}
+  <section>
+    <h2>Contexto de soporte</h2>
+    <dl class="support">
+      {% if ticket.support_context.symptom %}<dt>Síntoma</dt><dd>{{ ticket.support_context.symptom }}</dd>{% endif %}
+      {% if ticket.support_context.observed %}<dt>Observado</dt><dd>{{ ticket.support_context.observed }}</dd>{% endif %}
+      {% if ticket.support_context.expected %}<dt>Esperado</dt><dd>{{ ticket.support_context.expected }}</dd>{% endif %}
+      {% if ticket.support_context.impact %}<dt>Impacto</dt><dd>{{ ticket.support_context.impact }}</dd>{% endif %}
+      {% if ticket.support_context.environment %}<dt>Entorno</dt><dd>{{ ticket.support_context.environment }}</dd>{% endif %}
+    </dl>
+    {% if ticket.support_context.reproduction %}
+    <h3>Reproducción</h3>
+    <ol>{% for r in ticket.support_context.reproduction %}<li>{{ r }}</li>{% endfor %}</ol>
+    {% endif %}
+    {% if ticket.support_context.unknown %}
+    <h3>Todavía no se sabe</h3>
+    <ul>{% for u in ticket.support_context.unknown %}<li>{{ u }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <section>
     <h2>Evidencia</h2>
     <ul class="evidence">
       {% for e in ticket.evidence %}
-      <li><code>{{ e.path }}{% if e.lines %}:{{ e.lines }}{% endif %}</code>{% if e.note %} — {{ e.note }}{% endif %}</li>
+      <li>
+        {% if e.kind and e.kind != 'code' %}<span class="tag">{{ e.kind }}</span>{% endif %}
+        {% if e.path %}<code>{{ e.path }}{% if e.lines %}:{{ e.lines }}{% endif %}</code>{% endif %}
+        {% if e.command %}<code>{{ e.command }}</code>{% endif %}
+        {% if e.url %}<code>{{ e.url }}</code>{% endif %}
+        {% if e.note %} — {{ e.note }}{% endif %}
+        {% if e.result %} — {{ e.result }}{% endif %}
+      </li>
       {% endfor %}
     </ul>
   </section>
 
+  {% if ticket.steps %}
   <section><h2>Pasos</h2><ol>{% for s in ticket.steps %}<li>{{ s }}</li>{% endfor %}</ol></section>
+  {% endif %}
 
+  {% if ticket.acceptance %}
   <section><h2>Criterios de aceptación</h2>
     <ul class="acceptance">{% for a in ticket.acceptance %}<li>{{ a }}</li>{% endfor %}</ul>
   </section>
+  {% endif %}
 
+  {% if ticket.scope and ticket.scope.get('include') %}
   <section><h2>Scope</h2>
     <div class="scope">
       <div><h3>Entra</h3><ul>{% for i in ticket.scope.get('include', []) %}<li>{{ i }}</li>{% endfor %}</ul></div>
       <div><h3>Queda afuera</h3><ul>{% for e in ticket.scope.get('exclude', []) %}<li>{{ e }}</li>{% endfor %}</ul></div>
     </div>
   </section>
+  {% endif %}
 
   {% if ticket.risks %}
   <section><h2>Riesgos</h2><ul>{% for r in ticket.risks %}<li>{{ r }}</li>{% endfor %}</ul></section>
   {% endif %}
 
   {% if ticket.verification %}
-  <section><h2>Verificación</h2>
-    <pre>{{ ticket.verification }}</pre>
+  <section>
+    <h2>Resolución</h2>
+    {% if ticket.verification.kind %}<p><span class="tag">{{ ticket.verification.kind }}</span></p>{% endif %}
+    {% if ticket.verification.summary %}<p>{{ ticket.verification.summary }}</p>{% endif %}
+    {% if ticket.verification.user_response %}
+    <h3>Respuesta para el usuario</h3>
+    <p class="user-response">{{ ticket.verification.user_response }}</p>
+    {% endif %}
+    {% if ticket.verification.verifications %}
+    <h3>Verificaciones</h3>
+    <ul>{% for v in ticket.verification.verifications %}<li>{{ v.result }}{% if v.command %} <code>{{ v.command }}</code>{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if ticket.verification.pr %}<p>PR: <code>{{ ticket.verification.pr }}</code></p>{% endif %}
+    {% if ticket.verification.commit %}<p>Commit: <code>{{ ticket.verification.commit }}</code></p>{% endif %}
+    {% if ticket.verification.commands %}
+    <h3>Comandos</h3>
+    <ul>{% for c in ticket.verification.commands %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
+    {% endif %}
   </section>
   {% endif %}
 
@@ -61,10 +112,11 @@
     {% if review.needs_review %}<p class="stale">Sin revisar desde el último cambio.</p>{% endif %}
     <ul class="reviews">
       {% for r in review.current_verdicts %}
-      <li><strong>{{ r.verdict }}</strong>{% if r.note %} — {{ r.note }}{% endif %} <span class="muted">{{ r.created_at.strftime('%d/%m %H:%M') }}</span></li>
+      <li><strong>{{ r.verdict }}</strong>{% if r.note %} — {{ r.note }}{% endif %} <span class="muted">{{ r.created_at[:16].replace('T', ' ') }}</span></li>
       {% endfor %}
     </ul>
-    <form method="post" action="/t/{{ ticket.code }}/review?project={{ ticket.project }}" class="review-form">
+    <form method="post" action="/t/{{ ticket.code }}/review?project={{ ticket.project.slug }}" class="review-form">
+      {{ csrf_field(csrf_token) }}
       <button name="verdict" value="approved" class="ok">Apruebo</button>
       <input type="text" name="note" placeholder="si pedís cambios, explicá cuáles">
       <button name="verdict" value="changes_requested" class="warn">Pido cambios</button>
@@ -78,21 +130,24 @@
 
   <section class="status-bar">
     <h2>Estado</h2>
-    <form method="post" action="/t/{{ ticket.code }}/status?project={{ ticket.project }}" class="inline">
+    <form method="post" action="/t/{{ ticket.code }}/status?project={{ ticket.project.slug }}" class="inline">
+      {{ csrf_field(csrf_token) }}
       {% for s in ['ready','in_progress','blocked','open','wont'] %}
       <button name="status" value="{{ s }}">{{ s }}</button>
       {% endfor %}
     </form>
-    <p class="muted">Para cerrar usá <code>close_ticket</code> desde el agente: exige PR o commit y un comando de verificación.</p>
+    <p class="muted">Para cerrar usá <code>close_ticket</code> desde el agente: exige la resolución y su verificación.</p>
   </section>
 
   <section><h2>Comentarios</h2>
     <ul class="comments">
       {% for c in comments %}
-      <li><strong>{{ c.author_user.name if c.author_user else (c.author_agent.name if c.author_agent else '?') }}</strong>: {{ c.body }}</li>
+      <li><strong>{{ c.author_user.name if c.author_user else (c.author_agent.name if c.author_agent else '?') }}</strong>
+        <span class="muted">{{ c.created_at.strftime('%d/%m %H:%M') }}</span>: {{ c.body }}</li>
       {% endfor %}
     </ul>
-    <form method="post" action="/t/{{ ticket.code }}/comment?project={{ ticket.project }}" class="inline">
+    <form method="post" action="/t/{{ ticket.code }}/comment?project={{ ticket.project.slug }}" class="inline">
+      {{ csrf_field(csrf_token) }}
       <input type="text" name="body" placeholder="dejá un comentario…" required>
       <button>Enviar</button>
     </form>

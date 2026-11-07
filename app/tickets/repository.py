@@ -8,7 +8,16 @@ from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.orm import Session as OrmSession
 
 from app.domain.enums import SessionStatus, TicketStatus
-from app.domain.models import Project, Session, Ticket, TicketLink, TicketReview, User
+from app.domain.models import (
+    Comment,
+    Project,
+    Session,
+    Ticket,
+    TicketEvent,
+    TicketLink,
+    TicketReview,
+    User,
+)
 
 
 class RepoError(Exception):
@@ -52,9 +61,22 @@ def projects_for_ticket_code(db: OrmSession, code: str) -> list[str]:
     )
 
 
-def get_ticket_by_external_key(
-    db: OrmSession, project_id: int, external_key: str
-) -> Ticket | None:
+def tickets_by_code(db: OrmSession, code: str) -> list[tuple[str, Ticket]]:
+    """Todos los tickets con este código, con el slug de su proyecto.
+
+    A diferencia de get_ticket_by_code, no desambigua: sirve para explicar
+    que el código existe pero en otro proyecto.
+    """
+    rows = db.execute(
+        select(Project.slug, Ticket)
+        .join(Ticket, Ticket.project_id == Project.id)
+        .where(Ticket.code == code.upper())
+        .order_by(Project.slug)
+    ).all()
+    return [(str(slug), ticket) for slug, ticket in rows]
+
+
+def get_ticket_by_external_key(db: OrmSession, project_id: int, external_key: str) -> Ticket | None:
     return db.scalar(
         select(Ticket).where(
             and_(Ticket.project_id == project_id, Ticket.external_key == external_key)
@@ -161,20 +183,31 @@ def list_tickets(
     return list(db.scalars(query))
 
 
-def search_tickets(db: OrmSession, query_text: str, limit: int = 20) -> list[tuple[Ticket, str]]:
-    """Búsqueda full-text con FTS5. Devuelve (ticket, fragmento)."""
-    safe = query_text.replace('"', ' ')
+def search_tickets(
+    db: OrmSession, query_text: str, limit: int = 20, project: str | None = None
+) -> list[tuple[Ticket, str]]:
+    """Búsqueda full-text con FTS5. Devuelve (ticket, fragmento).
+
+    `project` acota la búsqueda: los códigos se repiten entre proyectos y
+    un hit sin proyecto no se puede usar sin contexto.
+    """
+    safe = query_text.replace('"', " ")
+    params: dict[str, Any] = {"q": safe, "lim": limit}
+    extra = ""
+    if project:
+        extra = "AND t.project_id = (SELECT id FROM projects WHERE slug = :project)"
+        params["project"] = project
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT t.id, snippet(tickets_fts, 1, '<<', '>>', '…', 12) AS frag
             FROM tickets_fts f JOIN tickets t ON t.id = f.rowid
-            WHERE tickets_fts MATCH :q
+            WHERE tickets_fts MATCH :q {extra}
             ORDER BY rank
             LIMIT :lim
             """
         ),
-        {"q": safe, "lim": limit},
+        params,
     ).all()
     out: list[tuple[Ticket, str]] = []
     for row in rows:
@@ -190,6 +223,32 @@ def get_links(db: OrmSession, ticket_id: int) -> list[TicketLink]:
             select(TicketLink).where(
                 or_(TicketLink.from_ticket_id == ticket_id, TicketLink.to_ticket_id == ticket_id)
             )
+        )
+    )
+
+
+def get_comments(db: OrmSession, ticket_id: int) -> list[Comment]:
+    """Conversación del ticket, en orden cronológico."""
+    return list(
+        db.scalars(
+            select(Comment)
+            .where(Comment.ticket_id == ticket_id)
+            .order_by(Comment.created_at, Comment.id)
+        )
+    )
+
+
+def get_events(
+    db: OrmSession, ticket_id: int, limit: int = 100, offset: int = 0
+) -> list[TicketEvent]:
+    """Historial del ticket, del más reciente al más viejo."""
+    return list(
+        db.scalars(
+            select(TicketEvent)
+            .where(TicketEvent.ticket_id == ticket_id)
+            .order_by(TicketEvent.created_at.desc(), TicketEvent.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
     )
 

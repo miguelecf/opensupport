@@ -74,7 +74,9 @@ class RateLimiter:
 
     def _evict(self, now: float) -> None:
         """Saca buckets que no receive hits en el doble de la ventana."""
-        stale = [k for k, b in self._buckets.items() if now - b.hits[0] > b.window_seconds * 2]
+        stale = [
+            k for k, b in self._buckets.items() if b.hits and now - b.hits[0] > b.window_seconds * 2
+        ]
         for key in stale:
             del self._buckets[key]
 
@@ -90,7 +92,9 @@ def get_limiter() -> RateLimiter:
     if _limiter is None:
         from app.config import settings
 
-        _limiter = RateLimiter(settings.rate_limit_writes_per_min, settings.rate_limit_reads_per_min)
+        _limiter = RateLimiter(
+            settings.rate_limit_writes_per_min, settings.rate_limit_reads_per_min
+        )
     return _limiter
 
 

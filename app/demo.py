@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEMO_PROJECT = "mi-tesis"
 DEMO_TICKET_KEY = "mi-tesis:auth:extraer-jwt"
+DEMO_INCIDENT_KEY = "mi-tesis:soporte:token-expirado"
 DEMO_SESSION_TITLE = "Auth: migrar a JWT"
 DEMO_SESSION_GOAL = "Que /login deje de usar sesiones en memoria y quede testeable."
 
@@ -64,7 +65,11 @@ def demo_draft() -> TicketDraft:
         ],
         scope={
             "include": ["extracción del módulo de verificación", "tests unitarios nuevos"],
-            "exclude": ["cambio del formato del token", "rotación de secrets", "cambios en el frontend"],
+            "exclude": [
+                "cambio del formato del token",
+                "rotación de secrets",
+                "cambios en el frontend",
+            ],
         },
         risks=["cambiar el orden de validación alteraría el error que devuelve el login"],
         tags=["auth", "testabilidad"],
@@ -72,18 +77,84 @@ def demo_draft() -> TicketDraft:
     )
 
 
+def demo_incident_draft() -> TicketDraft:
+    """El segundo caso: un incidente reportado sin acceso al repo.
+
+    Sale de la sesión a propósito: el soporte llega por otro lado, no dentro
+    de una sesión de planificación.
+    """
+    return TicketDraft(
+        external_key=DEMO_INCIDENT_KEY,
+        project=DEMO_PROJECT,
+        title="El login expira antes de tiempo en la app móvil",
+        summary=(
+            "Desde la versión 1.4 la sesión de la app móvil se cierra a los cinco minutos "
+            "aunque el usuario siga usando la app. En la web no pasa y con la 1.3 tampoco. "
+            "No tuve acceso al código para revisarlo: lo reporto con lo que se ve."
+        ),
+        type="bug",
+        priority="p1",
+        intake_mode="incident",
+        support_context={
+            "symptom": "La sesión móvil se cierra a los 5 minutos aunque la app esté en uso.",
+            "observed": "Al volver al foreground la app redirige al login. En la 1.3 duraba una hora.",
+            "impact": "Los usuarios tienen que loguearse de nuevo varias veces por sesión.",
+            "environment": "App móvil 1.4.0, iOS 18, backend de staging.",
+            "reproduction": [
+                "Entrar con la app móvil 1.4.0.",
+                "Dejar la app en foreground sin tocar nada.",
+                "Volver a la app después de 5 minutos: redirige al login.",
+            ],
+            "unknown": ["No sé si es el TTL del token o un refresh que no llega."],
+        },
+        evidence=[
+            {
+                "kind": "observation",
+                "note": "La app vuelve al login a los 5 minutos exactos, no de forma aleatoria.",
+            },
+            {
+                "kind": "log",
+                "note": "En el log del cliente: 'session expired' cada vez que vuelve al foreground.",
+            },
+        ],
+        outcome="",
+        steps=[],
+        acceptance=[],
+        scope={"include": [], "exclude": []},
+        risks=[],
+        tags=["soporte", "movil"],
+    )
+
+
 def seed(db: Any, principal: Principal) -> dict[str, Any]:  # noqa: ANN401
-    """Crea proyecto, ticket de ejemplo y sesión abierta. Idempotente."""
-    created: dict[str, Any] = {"project": False, "ticket": None, "session": None}
+    """Crea proyecto, tickets de ejemplo y sesión abierta. Idempotente."""
+    created: dict[str, Any] = {"project": False, "ticket": None, "incident": None, "session": None}
 
     if db.query(Project).filter_by(slug=DEMO_PROJECT).one_or_none() is None:
-        db.add(Project(slug=DEMO_PROJECT, name="Mi tesis", description="Proyecto de ejemplo", created_at=utcnow()))
+        db.add(
+            Project(
+                slug=DEMO_PROJECT,
+                name="Mi tesis",
+                description="Proyecto de ejemplo",
+                created_at=utcnow(),
+            )
+        )
         db.flush()
         created["project"] = True
+    else:
+        # El CLI lo pudo haber creado solo con el slug: el board agrupado por
+        # proyecto muestra nombre y descripción, así que los completamos.
+        project = db.query(Project).filter_by(slug=DEMO_PROJECT).one()
+        if project.name == project.slug:
+            project.name = "Mi tesis"
+        if not project.description:
+            project.description = "Proyecto de ejemplo"
 
     # La sesión va PRIMERO: si el ticket se crea después sin session=, la sesión
     # queda vacía y el primero que abre la web ve un board sin nada dentro.
-    session = sessions.start_session(db, principal, DEMO_PROJECT, DEMO_SESSION_TITLE, DEMO_SESSION_GOAL)
+    session = sessions.start_session(
+        db, principal, DEMO_PROJECT, DEMO_SESSION_TITLE, DEMO_SESSION_GOAL
+    )
     session_code = str(session.data["code"]) if session.ok else None
     if session_code:
         created["session"] = session_code
@@ -108,5 +179,14 @@ def seed(db: Any, principal: Principal) -> dict[str, Any]:  # noqa: ANN401
             code,
             "Este es un ticket de ejemplo. Leelo: muestra el nivel de detalle que OpenSupport exige. "
             "Podés borrarlo con `set_status` cuando quieras.",
+        )
+
+    # El segundo caso: un incidente sin acceso al repo. Nace en 'open'.
+    incident_result = tickets.create_ticket(db, principal, demo_incident_draft())
+    if incident_result.ok:
+        created["incident"] = str(incident_result.data["code"])
+    else:
+        logger.warning(
+            "No se pudo crear el incidente de demo: %s", incident_result.violations[0].message
         )
     return created

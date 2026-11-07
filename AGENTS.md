@@ -92,8 +92,9 @@ uv run opensupport export --format gh
 **La descripción de una tool es la documentación que el agente lee.** La mayoría
 solo mira `tools/list`: no abre resources ni lee el skill. Si la descripción no
 dice a dónde ir, el agente no lo descubre. Toda tool de escritura tiene que
-nombrar `opensupport://skill/ticket-authoring` o `opensupport://sessions`.
-`tests/test_protocol.py` lo verifica para que no se rompa en silencio.
+nombrar `opensupport://skill/ticket-authoring`, `opensupport://workflow/support`
+o `opensupport://sessions`. `tests/test_protocol.py` lo verifica para que no se
+rompa en silencio.
 
 **Los resources tienen que aparecer en `resources/list`, no solo como plantilla.**
 Una plantilla `{code}` solo se ve en `resources/templates/list`, que muchos
@@ -103,12 +104,13 @@ clientes nunca llaman. Si algo debe ser descubrible, va como resource plano.
 
 | Propiedad | Dónde | Cómo se rompe |
 |---|---|---|
-| CSRF en toda mutación web | `api/web/views.py:require_csrf` | Header `X-CSRF-Token` != cookie. Base lo inyecta por htmx. |
+| CSRF en toda mutación web | `api/web/views.py:require_csrf` | Header `X-CSRF-Token` o campo `csrf_token` != cookie. |
 | Rate limit por token | `ratelimit.py`, dentro de `require_write`/`require_read` | Token bucket 120/min escrituras, 600/min lecturas |
 | Redacción de credenciales | `logging_setup.py` | Filtro en los handlers; también tacha `os_*` en texto libre |
 | Aislamiento de escritura | `tickets/service.py:_can_mutate` | `E_NOT_YOUR_TICKET` si no sos owner, autor ni admin |
-| Alcance de proyecto | `api_tokens.project_scope` | `E_PROJECT_OUT_OF_SCOPE` con la lista de permitidos |
-| `done` con evidencia | `tickets/service.py:close_ticket` | Sin PR/commit o sin comando, no cierra |
+| Alcance de proyecto | `tickets/service.py:_scope_denied` | `E_PROJECT_OUT_OF_SCOPE` con la lista de permitidos |
+| Identidad `(proyecto, código)` | `tickets/repository.py` | Sin `project=`, `E_AMBIGUOUS_TICKET`: nunca elige por vos |
+| `done` con resolución | `tickets/service.py:close_ticket` | Sin verificación observable o sin respuesta al usuario, no cierra |
 
 Si agregás una tool que escriba, no te saltees `require_write()`: ahí viven el scope y el rate limit.
 
@@ -127,12 +129,16 @@ Si agregás una tool que escriba, no te saltees `require_write()`: ahí viven el
 
 - **draft** — el objeto que manda el agente, antes de existir como ticket.
 - **violation** — `{code, field, message, fix}`. `E_*` bloquea, `W_*` avisa.
+- **modalidad** (`intake_mode`) — cómo llegó el reporte: `incident` (algo pasa,
+  sin análisis) o `implementation` (ya se sabe qué cambiar). No es el `type`.
 - **owner** — la persona que responde por el ticket. Cambiable.
 - **autor** — el agente que escribió el ticket. Inmutable.
 - **link** — relación entre tickets: `blocks`, `split_from`, `relates_to`.
 - **code** — `OS-014` para tickets, `PLN-002` para sesiones. Secuencial por proyecto.
 - **scope** — proyectos que un token puede escribir. Vacío = todos.
 - **review** — veredicto sobre un ticket. No cambia el status.
+- **resolución** — cómo se cerró: clase de solución, respuesta para el usuario y
+  verificaciones observables.
 
 ## Idioma
 

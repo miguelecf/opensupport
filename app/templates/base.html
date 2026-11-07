@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}OpenSupport{% endblock %}</title>
   <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
   <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
   <script>
@@ -26,7 +29,7 @@
     </nav>
     <div class="who">
       {% if user %}{{ user.name }}
-      <form method="post" action="/logout" class="inline"><button class="link">salir</button></form>
+      <form method="post" action="/logout" class="inline">{{ csrf_field(csrf_token) }}<button class="link">salir</button></form>
       {% endif %}
     </div>
   </header>

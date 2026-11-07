@@ -2,7 +2,7 @@
 {% block content %}
 <h1>Sesiones de planificación</h1>
 <p class="muted">Un contexto compartido donde personas y agentes aportan tickets sobre el mismo tema.</p>
-<table class="board">
+<div class="table-wrap"><table class="admin">
   <thead><tr><th>Código</th><th>Título</th><th>Objetivo</th><th>Proyecto</th><th>Estado</th></tr></thead>
   <tbody>
   {% for s in sessions %}
@@ -15,6 +15,6 @@
     </tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 {% if not sessions %}<p class="muted">No hay sesiones todavía. Creá una con <code>start_session</code> desde un agente.</p>{% endif %}
 {% endblock %}

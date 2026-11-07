@@ -62,9 +62,7 @@ class Principal:
 
 def resolve_token(db: OrmSession, plain: str) -> Principal | None:
     """Lookup del token. Devuelve None si no existe, está revocado o expiró."""
-    token = db.scalar(
-        select(ApiToken).where(ApiToken.token_hash == hash_token(plain))
-    )
+    token = db.scalar(select(ApiToken).where(ApiToken.token_hash == hash_token(plain)))
     if token is None or token.revoked_at is not None:
         return None
     user = db.get(User, token.user_id)
@@ -109,9 +107,7 @@ def create_token(
 
 
 def revoke_token(db: OrmSession, token_id: int) -> None:
-    db.execute(
-        update(ApiToken).where(ApiToken.id == token_id).values(revoked_at=utcnow())
-    )
+    db.execute(update(ApiToken).where(ApiToken.id == token_id).values(revoked_at=utcnow()))
 
 
 def list_tokens(db: OrmSession, user_id: int) -> list[ApiToken]:

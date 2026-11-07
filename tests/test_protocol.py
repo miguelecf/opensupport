@@ -33,7 +33,9 @@ HEADERS = {
 
 
 def _rpc(client: TestClient, token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    response = client.post("/mcp", json=payload, headers={**HEADERS, "Authorization": f"Bearer {token}"})
+    response = client.post(
+        "/mcp", json=payload, headers={**HEADERS, "Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 200, response.text
     body = response.text
     if body.startswith("event:"):
@@ -58,9 +60,7 @@ def raw(db_url: str) -> Iterator[tuple[TestClient, str]]:
 def test_both_paths_work_without_redirect(raw: tuple[TestClient, str], path: str) -> None:
     """El bloque de init --demo dice /mcp. Si eso redirige, el cliente decide."""
     client, token = raw
-    response = client.post(
-        path, json=INIT, headers={**HEADERS, "Authorization": f"Bearer {token}"}
-    )
+    response = client.post(path, json=INIT, headers={**HEADERS, "Authorization": f"Bearer {token}"})
     assert response.status_code == 200, f"{path} devolvió {response.status_code}"
     assert response.status_code != 307
 
@@ -83,8 +83,10 @@ def test_initialize_reports_server_info(raw: tuple[TestClient, str]) -> None:
 
 def test_every_tool_declares_an_output_schema(raw: tuple[TestClient, str]) -> None:
     client, token = raw
-    tools = _rpc(client, token, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-    assert len(tools) == 18
+    tools = _rpc(client, token, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"][
+        "tools"
+    ]
+    assert len(tools) == 21
     for tool in tools:
         assert tool.get("description"), f"{tool['name']} sin descripción"
         assert tool.get("outputSchema"), f"{tool['name']} sin outputSchema"
@@ -148,8 +150,12 @@ def test_unknown_tool_is_an_error_result(raw: tuple[TestClient, str]) -> None:
     result = _rpc(
         client,
         token,
-        {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
-         "params": {"name": "no_existe", "arguments": {}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {"name": "no_existe", "arguments": {}},
+        },
     )["result"]
     assert result["isError"] is True
 
@@ -177,37 +183,52 @@ WRITE_TOOLS = (
     "link_tickets",
     "close_ticket",
     "set_status",
+    "add_comment",
+    "review_ticket",
+    "assign_ticket",
     "start_session",
     "join_session",
+    "close_session",
 )
 
 
 def test_every_write_tool_points_somewhere(raw: tuple[TestClient, str]) -> None:
     """Un agente solo lee tools/list. Si ahí no dice a dónde ir, no lo va a descubrir."""
     client, token = raw
-    tools = {t["name"]: t["description"] for t in _rpc(
-        client, token, {"jsonrpc": "2.0", "id": 9, "method": "tools/list"}
-    )["result"]["tools"]}
+    tools = {
+        t["name"]: t["description"]
+        for t in _rpc(client, token, {"jsonrpc": "2.0", "id": 9, "method": "tools/list"})["result"][
+            "tools"
+        ]
+    }
     for name in WRITE_TOOLS:
         desc = tools[name]
         assert (
-            "opensupport://skill" in desc or "opensupport://sessions" in desc
+            "opensupport://skill" in desc
+            or "opensupport://sessions" in desc
+            or "opensupport://workflow" in desc
         ), f"{name} no dice dónde está el contrato"
 
 
 def test_create_ticket_says_lint_first(raw: tuple[TestClient, str]) -> None:
     client, token = raw
-    tools = {t["name"]: t["description"] for t in _rpc(
-        client, token, {"jsonrpc": "2.0", "id": 10, "method": "tools/list"}
-    )["result"]["tools"]}
+    tools = {
+        t["name"]: t["description"]
+        for t in _rpc(client, token, {"jsonrpc": "2.0", "id": 10, "method": "tools/list"})[
+            "result"
+        ]["tools"]
+    }
     assert "lint_ticket" in tools["create_ticket"]
 
 
 def test_close_ticket_says_set_status_does_not_close(raw: tuple[TestClient, str]) -> None:
     client, token = raw
-    tools = {t["name"]: t["description"] for t in _rpc(
-        client, token, {"jsonrpc": "2.0", "id": 11, "method": "tools/list"}
-    )["result"]["tools"]}
+    tools = {
+        t["name"]: t["description"]
+        for t in _rpc(client, token, {"jsonrpc": "2.0", "id": 11, "method": "tools/list"})[
+            "result"
+        ]["tools"]
+    }
     assert "done" in tools["close_ticket"]
     assert "close_ticket" in tools["set_status"]
 
@@ -231,8 +252,12 @@ def test_sessions_resource_is_readable(raw: tuple[TestClient, str]) -> None:
     result = _rpc(
         client,
         token,
-        {"jsonrpc": "2.0", "id": 13, "method": "resources/read",
-         "params": {"uri": "opensupport://sessions"}},
+        {
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "resources/read",
+            "params": {"uri": "opensupport://sessions"},
+        },
     )["result"]
     assert result["contents"][0]["mimeType"] == "text/markdown"
     assert result["contents"][0]["text"].startswith("#")
@@ -241,7 +266,9 @@ def test_sessions_resource_is_readable(raw: tuple[TestClient, str]) -> None:
 def test_tools_taking_a_code_also_take_a_project(raw: tuple[TestClient, str]) -> None:
     """El código es único por proyecto: sin `project` no se puede desambiguar."""
     client, token = raw
-    tools = _rpc(client, token, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+    tools = _rpc(client, token, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"][
+        "tools"
+    ]
     by_code = [t for t in tools if "code" in t["inputSchema"]["properties"]]
     assert len(by_code) >= 8, "esperábamos las tools que operan por código"
     for tool in by_code:

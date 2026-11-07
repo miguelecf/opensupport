@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.tickets.schema import EvidenceItem, Scope, TicketDraft
+from app.tickets.schema import EvidenceItem, Scope, SupportContext, TicketDraft
 
 
 def make_valid_draft(**overrides: Any) -> TicketDraft:
@@ -57,11 +57,62 @@ def make_valid_draft(**overrides: Any) -> TicketDraft:
         ],
         "scope": Scope(
             include=["extracción del módulo de verificación", "tests unitarios nuevos"],
-            exclude=["cambio del formato del token", "rotación de secrets", "cambios en el frontend"],
+            exclude=[
+                "cambio del formato del token",
+                "rotación de secrets",
+                "cambios en el frontend",
+            ],
         ),
         "risks": ["cambiar el orden de validación alteraría el error que devuelve /login"],
         "tags": ["auth", "testabilidad"],
         "estimate": "s",
+    }
+    data.update(overrides)
+    return TicketDraft(**data)
+
+
+def make_incident_draft(**overrides: Any) -> TicketDraft:
+    """Un incidente sin acceso al repo: síntoma y observación, sin diagnóstico."""
+    data: dict[str, Any] = {
+        "external_key": "mi-tesis:soporte:login-timeout",
+        "project": "mi-tesis",
+        "title": "El login expira antes de tiempo en la app móvil",
+        "summary": (
+            "Desde la versión 1.4 la sesión de la app móvil se cierra a los cinco minutos "
+            "aunque el usuario siga usando la app. En la web no pasa y con la 1.3 tampoco. "
+            "No tuve acceso al código para revisarlo: lo reporto con lo que se ve."
+        ),
+        "type": "bug",
+        "priority": "p1",
+        "intake_mode": "incident",
+        "support_context": SupportContext(
+            symptom="La sesión móvil se cierra a los 5 minutos aunque la app esté en uso.",
+            observed="Al volver al foreground la app redirige al login. En la 1.3 duraba una hora.",
+            impact="Los usuarios tienen que loguearse de nuevo varias veces por sesión.",
+            environment="App móvil 1.4.0, iOS 18, backend de staging.",
+            reproduction=[
+                "Entrar con la app móvil 1.4.0.",
+                "Dejar la app en foreground sin tocar nada.",
+                "Volver a la app después de 5 minutos: redirige al login.",
+            ],
+            unknown=["No sé si es el TTL del token o un refresh que no llega."],
+        ),
+        "evidence": [
+            {
+                "kind": "observation",
+                "note": "La app vuelve al login a los 5 minutos exactos, no de forma aleatoria.",
+            },
+            {
+                "kind": "log",
+                "note": "En el log del cliente: 'session expired' cada vez que vuelve al foreground.",
+            },
+        ],
+        "outcome": "",
+        "steps": [],
+        "acceptance": [],
+        "scope": Scope(include=[], exclude=[]),
+        "risks": [],
+        "tags": ["soporte", "movil"],
     }
     data.update(overrides)
     return TicketDraft(**data)

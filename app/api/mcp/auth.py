@@ -51,6 +51,7 @@ class SqliteTokenVerifier(TokenVerifier):
                 "agent_id": principal.agent_id,
                 "agent_name": principal.agent_name,
                 "project_scope": principal.project_scope,
+                "token_id": principal.token_id,
                 "label": principal.label,
             },
         )
@@ -70,6 +71,7 @@ def current_principal() -> Principal:
         agent_name=claims.get("agent_name"),
         scopes=list(access.scopes or []),
         project_scope=list(claims.get("project_scope", [])),
+        token_id=claims.get("token_id"),
     )
 
 
@@ -83,9 +85,7 @@ def enforce_rate_limit(kind: str, principal: Principal | None = None) -> None:
     ident = str(who.token_id or who.user_id)
     allowed, retry_after = get_limiter().check(kind, ident)
     if not allowed:
-        raise ToolError(
-            f"Rate limit: superaste el límite de {kind}. Reintentá en {retry_after}s."
-        )
+        raise ToolError(f"Rate limit: superaste el límite de {kind}. Reintentá en {retry_after}s.")
 
 
 def require_write() -> Principal:

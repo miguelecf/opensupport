@@ -10,14 +10,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session as OrmSession
 
 from app.auth.tokens import Principal
-from app.db.base import utcnow
+from app.db.base import ensure_write_transaction, utcnow
 from app.domain.enums import (
     AgentClient,
     EventKind,
+    IntakeMode,
     LinkKind,
+    ResolutionKind,
     ReviewVerdict,
     SessionStatus,
     TicketStatus,
@@ -36,7 +39,15 @@ from app.domain.models import (
 from app.domain.transitions import allowed_targets, can_transition, requires_close_evidence
 from app.tickets import repository as repo
 from app.tickets.linter import errors, lint, warnings
-from app.tickets.schema import TicketDraft, TicketPatch, Violation, compute_content_hash
+from app.tickets.schema import (
+    MIN_OUTCOME,
+    Resolution,
+    TicketDraft,
+    TicketPatch,
+    Violation,
+    compute_content_hash,
+    draft_from_dict,
+)
 
 NOT_YOUR_TICKET = (
     "E_NOT_YOUR_TICKET",
@@ -121,9 +132,7 @@ def _resolve_owner(db: OrmSession, principal: Principal, owner_name: str | None)
     return db.get(User, principal.user_id)
 
 
-def create_ticket(
-    db: OrmSession, principal: Principal, draft: TicketDraft
-) -> Result:
+def create_ticket(db: OrmSession, principal: Principal, draft: TicketDraft) -> Result:
     found = lint(draft)
     if errors(found):
         # Telemetría: queda el motivo del rechazo aunque no haya fila de ticket.
@@ -201,7 +210,30 @@ def create_ticket(
 
     code = repo.next_ticket_code(db, project)
     payload = draft.model_dump(mode="json")
-    hash_parts = {k: payload.get(k) for k in ("title", "summary", "outcome", "evidence", "steps", "acceptance", "scope")}
+    hash_parts = {
+        k: payload.get(k)
+        for k in (
+            "title",
+            "summary",
+            "outcome",
+            "problem",
+            "evidence",
+            "steps",
+            "acceptance",
+            "scope",
+            "risks",
+            "tags",
+            "intake_mode",
+            "support_context",
+        )
+    }
+
+    # Un incidente nace 'open': nadie investigó todavía. Una propuesta
+    # investigada nace 'ready'. Es la diferencia entre algo que pasa y algo
+    # que ya se sabe qué hay que cambiar.
+    initial_status = (
+        TicketStatus.OPEN if draft.intake_mode is IntakeMode.INCIDENT else TicketStatus.READY
+    )
 
     ticket = Ticket(
         code=code,
@@ -213,7 +245,9 @@ def create_ticket(
         external_key=draft.external_key,
         type=draft.type,
         priority=draft.priority,
-        status=TicketStatus.READY,
+        status=initial_status,
+        intake_mode=draft.intake_mode,
+        support_context=payload.get("support_context"),
         title=draft.title.strip(),
         summary=draft.summary.strip(),
         problem=(draft.problem or "").strip() or None,
@@ -234,33 +268,82 @@ def create_ticket(
 
     _add_event(db, ticket, EventKind.CREATED, principal, {"code": code})
     for dep in draft.deps:
-        link_result = link_tickets(db, principal, code, dep, LinkKind.BLOCKS)
+        link_result = link_tickets(db, principal, code, dep, LinkKind.BLOCKS, project.slug)
         if not link_result.ok:
-            db.rollback()
+            # No se hace db.rollback(): eso mataría los tickets válidos del lote.
+            # Se borra solo este ticket, con lo suyo, y se sigue.
+            _discard_ticket(db, ticket)
             return link_result
 
     return Result(
         ok=True,
         violations=warnings(found),
-        data={"code": code, "status": "created", "warnings": [w.model_dump() for w in warnings(found)]},
+        data={
+            "code": code,
+            "status": "created",
+            "ticket_status": initial_status,
+            "warnings": [w.model_dump() for w in warnings(found)],
+        },
     )
 
 
+def _discard_ticket(db: OrmSession, ticket: Ticket) -> None:
+    """Borra un ticket recién creado sin tocar el resto de la transacción.
+
+    Es lo que permite que un lote sea parcial: un item que falla por una
+    dependencia inválida no puede dejar un ticket a medias ni confirmar lo que
+    ya se había creado.
+    """
+    db.execute(delete(TicketEvent).where(TicketEvent.ticket_id == ticket.id))
+    db.delete(ticket)
+    db.flush()
+
+
 def create_tickets_batch(
-    db: OrmSession, principal: Principal, items: list[TicketDraft], session: str | None = None
+    db: OrmSession,
+    principal: Principal,
+    items: list[TicketDraft | dict[str, Any]],
+    session: str | None = None,
 ) -> list[Result]:
-    """Parcial por diseño: un item malo no tira los válidos."""
+    """Parcial por diseño: un item malo no tira los válidos.
+
+    Un item mal formado (ni siquiera es un borrador) se rechaza con su
+    mensaje, y el resto del lote sigue adelante.
+    """
     results: list[Result] = []
-    for index, item in enumerate(items):
+    # Un savepoint necesita una transacción física abierta: si no, SQLite lo
+    # toma como la transacción más externa y su RELEASE la confirma.
+    ensure_write_transaction(db)
+    for index, raw in enumerate(items):
+        if isinstance(raw, TicketDraft):
+            item = raw
+        else:
+            try:
+                item = draft_from_dict(raw, session=session)
+            except Exception as exc:  # noqa: BLE001 - se reporta al agente
+                results.append(
+                    Result(
+                        ok=False,
+                        violations=[
+                            _v(
+                                "E_INVALID_DRAFT",
+                                f"items[{index}]",
+                                "El item no tiene la forma de un borrador.",
+                                str(exc)[:200],
+                            )
+                        ],
+                        data={"index": index, "status": "rejected"},
+                    )
+                )
+                continue
         effective = item
         if session and not item.session:
             effective = item.model_copy(update={"session": session})
+        savepoint = db.begin_nested()
         try:
-            savepoint = db.begin_nested()
             outcome = create_ticket(db, principal, effective)
-            savepoint.commit()
         except Exception as exc:  # noqa: BLE001 - se reporta al agente, no se propaga
-            db.rollback()
+            savepoint.rollback()
             results.append(
                 Result(
                     ok=False,
@@ -276,6 +359,11 @@ def create_tickets_batch(
                 )
             )
             continue
+        if outcome.ok:
+            savepoint.commit()
+        else:
+            # Un item rechazado no deja ticket: se deshace lo que se hizo.
+            savepoint.rollback()
         outcome.data["index"] = index
         # Contrato uniforme: cada item trae status, creada o rechazada.
         outcome.data.setdefault("status", "created" if outcome.ok else "rejected")
@@ -283,9 +371,7 @@ def create_tickets_batch(
     return results
 
 
-def _record_lint_failure(
-    db: OrmSession, principal: Principal, found: list[Violation]
-) -> None:
+def _record_lint_failure(db: OrmSession, principal: Principal, found: list[Violation]) -> None:
     """Un draft rechazado deja rastro para recalibrar umbrales, pero no fila de ticket."""
     for violation in errors(found):
         db.add(
@@ -310,6 +396,29 @@ def _can_mutate(ticket: Ticket, principal: Principal) -> bool:
     if principal.is_admin or ticket.owner_user_id == principal.user_id:
         return True
     return principal.agent_id is not None and ticket.author_agent_id == principal.agent_id
+
+
+def _scope_denied(ticket: Ticket, principal: Principal) -> Result | None:
+    """El alcance del token se chequea en el servicio, no en el adaptador.
+
+    Si un token solo puede escribir en 'mi-tesis', no puede comentar ni
+    revisar un ticket de 'otro-proyecto' aunque sea el owner.
+    """
+    slug = ticket.project.slug
+    if principal.can_write_project(slug):
+        return None
+    allowed = ", ".join(principal.project_scope) or "(ninguno)"
+    return Result(
+        ok=False,
+        violations=[
+            _v(
+                OUT_OF_SCOPE,
+                "project",
+                f"El agente '{principal.label}' no tiene alcance sobre '{slug}'.",
+                f"Proyectos permitidos: {allowed}.",
+            )
+        ],
+    )
 
 
 def _resolve_ticket(
@@ -338,7 +447,14 @@ def _resolve_ticket(
         )
     return None, Result(
         ok=False,
-        violations=[_v("E_UNKNOWN_TICKET", "code", f"El ticket '{code}' no existe.", "Usá list_tickets para ver los existentes.")],
+        violations=[
+            _v(
+                "E_UNKNOWN_TICKET",
+                "code",
+                f"El ticket '{code}' no existe.",
+                "Usá list_tickets para ver los existentes.",
+            )
+        ],
     )
 
 
@@ -349,9 +465,42 @@ def _load_mutable(
     if ticket is None:
         assert error is not None
         return error
+    denied = _scope_denied(ticket, principal)
+    if denied is not None:
+        return denied
     if not _can_mutate(ticket, principal):
         return _deny()
     return ticket
+
+
+def _draft_from_ticket(ticket: Ticket, changes: dict[str, Any]) -> TicketDraft:
+    """Arma el borrador resultante de aplicar `changes` sobre el ticket.
+
+    Es lo que permite validar una actualización sin mutar: se valida el
+    resultado combinado, no el parche suelto.
+    """
+    data: dict[str, Any] = {
+        "project": ticket.project.slug,
+        "title": ticket.title,
+        "summary": ticket.summary,
+        "problem": ticket.problem,
+        "outcome": ticket.outcome,
+        "type": ticket.type,
+        "priority": ticket.priority,
+        "intake_mode": ticket.intake_mode,
+        "support_context": ticket.support_context,
+        "evidence": ticket.evidence or [],
+        "steps": ticket.steps or [],
+        "acceptance": ticket.acceptance or [],
+        "scope": ticket.scope or {},
+        "risks": ticket.risks or [],
+        "tags": ticket.tags or [],
+        "estimate": ticket.estimate,
+    }
+    for key, value in changes.items():
+        if key in data:
+            data[key] = value
+    return TicketDraft(**data)
 
 
 def update_ticket(
@@ -384,6 +533,13 @@ def update_ticket(
 
     data = patch.model_dump(mode="json", exclude_unset=True, exclude_none=True)
     changed = {k: v for k, v in data.items() if k != "deps"}
+    if changed:
+        # Se valida el resultado combinado: una actualización que rompe el
+        # contrato no se guarda, y no deja evento ni cambia el hash.
+        merged = _draft_from_ticket(ticket, changed)
+        found = lint(merged)
+        if errors(found):
+            return Result(ok=False, violations=found)
     for key, value in changed.items():
         setattr(ticket, key, value)
     ticket.updated_at = utcnow()
@@ -392,14 +548,52 @@ def update_ticket(
         "title": ticket.title,
         "summary": ticket.summary,
         "outcome": ticket.outcome,
+        "problem": ticket.problem,
         "evidence": ticket.evidence,
         "steps": ticket.steps,
         "acceptance": ticket.acceptance,
         "scope": ticket.scope,
+        "risks": ticket.risks,
+        "tags": ticket.tags,
+        "intake_mode": ticket.intake_mode,
+        "support_context": ticket.support_context,
     }
     ticket.content_hash = compute_content_hash(hash_parts)
     _add_event(db, ticket, EventKind.UPDATED, principal, {"fields": list(changed)})
     return Result(ok=True, data={"code": ticket.code, "updated_at": ticket.updated_at.isoformat()})
+
+
+def missing_for_ready(ticket: Ticket) -> list[dict[str, str]]:
+    """Qué le falta a un ticket para poder empezar a trabajarlo.
+
+    Un incidente nace 'open' porque nadie investigó todavía. Para promotedlo
+    a 'ready' hace falta un objetivo comprobable, un alcance y un plan: sin
+    eso, 'ready' solo miente.
+    """
+    missing: list[dict[str, str]] = []
+    if len((ticket.outcome or "").strip()) < MIN_OUTCOME:
+        missing.append(
+            {
+                "field": "outcome",
+                "fix": "Enunciá el resultado observable: qué tiene que pasar cuando esté resuelto.",
+            }
+        )
+    scope = ticket.scope or {}
+    if not scope.get("include"):
+        missing.append(
+            {
+                "field": "scope.include",
+                "fix": "Enumerá qué entra: archivos, comportamientos o superficie afectada.",
+            }
+        )
+    if not (ticket.steps or []):
+        missing.append(
+            {
+                "field": "steps",
+                "fix": "Escribí los pasos del diagnóstico o de la intervención.",
+            }
+        )
+    return missing
 
 
 def set_status(
@@ -423,7 +617,7 @@ def set_status(
                     "E_CLOSED_NEEDS_EVIDENCE",
                     "status",
                     "No se puede setear 'done' directamente.",
-                    "Usá close_ticket con verification={pr o commit, commands[]} para cerrar.",
+                    "Usá close_ticket con la resolución y su verificación para cerrar.",
                 )
             ],
         )
@@ -439,14 +633,83 @@ def set_status(
                 )
             ],
         )
+    if target is TicketStatus.WONT and not (note or "").strip():
+        return Result(
+            ok=False,
+            violations=[
+                _v(
+                    "E_WONT_REASON_REQUIRED",
+                    "note",
+                    "Descartar un ticket sin decir por qué no se pierde el motivo.",
+                    "Escribí en 'note' por qué no se va a trabajar: no aplica, duplicado, sin impacto.",
+                )
+            ],
+        )
+    if target is TicketStatus.READY:
+        missing = missing_for_ready(ticket)
+        if missing:
+            return Result(
+                ok=False,
+                violations=[
+                    _v(
+                        "E_PROMOTION_NOT_READY",
+                        "status",
+                        "El ticket todavía no está listo para trabajarse.",
+                        "Completá: " + "; ".join(f"{m['field']} ({m['fix']})" for m in missing),
+                    )
+                ],
+                data={"missing": missing},
+            )
 
     previous = ticket.status
     ticket.status = target
     ticket.updated_at = utcnow()
+    payload: dict[str, Any] = {"from": previous, "to": target, "note": note}
+    if previous == TicketStatus.DONE and ticket.verification:
+        # La resolución anterior queda como historia, no como solución vigente.
+        payload["previous_resolution"] = ticket.verification
+        ticket.verification = None
     _add_event(
-        db, ticket, EventKind.STATUS_CHANGED, principal, {"from": previous, "to": target, "note": note}
+        db,
+        ticket,
+        EventKind.STATUS_CHANGED,
+        principal,
+        payload,
     )
     return Result(ok=True, data={"code": ticket.code, "status": target})
+
+
+def _parse_resolution(verification: dict[str, Any]) -> tuple[Resolution | None, Result | None]:
+    """Normaliza el cierre al contrato nuevo.
+
+    El contrato viejo (pr/commit/commands/notes) se acepta tal cual: un
+    cliente que ya cierra así no se rompe. El nuevo trae `kind`, resumen,
+    respuesta para el usuario y verificaciones observables.
+    """
+    if "kind" not in verification:
+        legacy = Resolution(
+            kind=ResolutionKind.CODE_FIX,
+            summary=str(verification.get("notes") or ""),
+            user_response=str(verification.get("notes") or ""),
+            pr=verification.get("pr"),
+            commit=verification.get("commit"),
+            commands=list(verification.get("commands") or []),
+        )
+        return legacy, None
+    try:
+        return Resolution(**verification), None
+    except Exception as exc:  # noqa: BLE001 - se reporta como violación
+        return None, Result(
+            ok=False,
+            violations=[
+                _v(
+                    "E_RESOLUTION_INCOMPLETE",
+                    "resolution",
+                    "La resolución no tiene la forma esperada.",
+                    str(exc)[:200],
+                )
+            ],
+        )
 
 
 def close_ticket(
@@ -460,17 +723,54 @@ def close_ticket(
     if isinstance(ticket, Result):
         return ticket
 
-    has_ref = bool(verification.get("pr") or verification.get("commit"))
-    commands = verification.get("commands") or []
-    if not has_ref or not commands:
+    resolution, parse_error = _parse_resolution(verification)
+    if parse_error is not None:
+        return parse_error
+    assert resolution is not None
+    legacy = "kind" not in verification
+
+    if resolution.kind is ResolutionKind.CODE_FIX:
+        has_ref = bool(resolution.pr or resolution.commit)
+        if not has_ref or not resolution.commands:
+            return Result(
+                ok=False,
+                violations=[
+                    _v(
+                        "E_VERIFICATION_INCOMPLETE",
+                        "verification",
+                        "Cerrar un ticket exige evidencia de que se implementó.",
+                        "Mandá verification={pr o commit, commands: ['uv run pytest ...']}, "
+                        "o usá kind='configuration'/'workaround'/'guidance' con una "
+                        "comprobación observable.",
+                    )
+                ],
+            )
+    else:
+        if not resolution.verifications or not all(
+            v.result.strip() for v in resolution.verifications
+        ):
+            return Result(
+                ok=False,
+                violations=[
+                    _v(
+                        "E_VERIFICATION_INCOMPLETE",
+                        "resolution.verifications",
+                        "Una solución sin cambios de código se cierra con una comprobación "
+                        "observable: qué se verificó y qué se obtuvo.",
+                        "Mandá resolution={kind, summary, user_response, "
+                        "verifications: [{result: '...', command: '...', ran_at: '...'}]}.",
+                    )
+                ],
+            )
+    if not legacy and not resolution.user_response.strip():
         return Result(
             ok=False,
             violations=[
                 _v(
-                    "E_VERIFICATION_INCOMPLETE",
-                    "verification",
-                    "Cerrar un ticket exige evidencia de que se implementó.",
-                    "Mandá verification={pr o commit, commands: ['uv run pytest ...']}.",
+                    "E_RESOLUTION_INCOMPLETE",
+                    "resolution.user_response",
+                    "Falta la respuesta para el usuario.",
+                    "Escribí qué pasó y qué tiene que hacer: es lo que queda guardado del ticket.",
                 )
             ],
         )
@@ -489,12 +789,23 @@ def close_ticket(
 
     previous = ticket.status
     ticket.status = TicketStatus.DONE
-    ticket.verification = verification
+    ticket.verification = resolution.model_dump(mode="json")
     ticket.updated_at = utcnow()
     _add_event(
-        db, ticket, EventKind.CLOSED, principal, {"from": previous, "verification": verification}
+        db,
+        ticket,
+        EventKind.CLOSED,
+        principal,
+        {"from": previous, "resolution": ticket.verification},
     )
-    return Result(ok=True, data={"code": ticket.code, "status": TicketStatus.DONE})
+    return Result(
+        ok=True,
+        data={
+            "code": ticket.code,
+            "status": TicketStatus.DONE,
+            "resolution": ticket.verification,
+        },
+    )
 
 
 def assign_ticket(
@@ -508,13 +819,20 @@ def assign_ticket(
         return Result(
             ok=False,
             violations=[
-                _v("E_UNKNOWN_USER", "owner_user", f"El usuario '{owner_user}' no existe.", "Usá un nombre existente.")
+                _v(
+                    "E_UNKNOWN_USER",
+                    "owner_user",
+                    f"El usuario '{owner_user}' no existe.",
+                    "Usá un nombre existente.",
+                )
             ],
         )
     previous = ticket.owner_user_id
     ticket.owner_user_id = owner.id
     ticket.updated_at = utcnow()
-    _add_event(db, ticket, EventKind.ASSIGNED, principal, {"from_user": previous, "to_user": owner.name})
+    _add_event(
+        db, ticket, EventKind.ASSIGNED, principal, {"from_user": previous, "to_user": owner.name}
+    )
     return Result(ok=True, data={"code": ticket.code, "owner_user": owner.name})
 
 
@@ -525,6 +843,9 @@ def add_comment(
     if ticket is None:
         assert error is not None
         return error
+    denied = _scope_denied(ticket, principal)
+    if denied is not None:
+        return denied
     comment = Comment(
         ticket_id=ticket.id,
         author_user_id=None if principal.agent_id else principal.user_id,
@@ -567,26 +888,56 @@ def link_tickets(
     kind: str,
     project: str | None = None,
 ) -> Result:
-    src = repo.get_ticket_by_code(db, from_code, project)
+    src, src_error = _resolve_ticket(db, from_code, project)
     if src is None:
-        return Result(
-            ok=False,
-            violations=[_v("E_UNKNOWN_TICKET", "from", f"El ticket '{from_code}' no existe.", "Revisá el código.")],
-        )
-    dst = repo.get_ticket_by_code(db, to_ref)
+        assert src_error is not None
+        return src_error
+    denied = _scope_denied(src, principal)
+    if denied is not None:
+        return denied
+    # El destino se busca DENTRO del proyecto del origen: los códigos se
+    # repiten entre proyectos y un OS-001 de otro proyecto no es el destino.
+    dst = repo.get_ticket_by_code(db, to_ref, src.project.slug)
     if dst is None:
         dst = repo.get_ticket_by_external_key(db, src.project_id, to_ref)
     if dst is None:
+        otros = repo.tickets_by_code(db, to_ref)
+        if otros:
+            slugs = ", ".join(slug for slug, _ in otros)
+            return Result(
+                ok=False,
+                violations=[
+                    _v(
+                        "E_TICKET_OTHER_PROJECT",
+                        "to",
+                        f"'{to_ref}' existe en el proyecto '{otros[0][0]}', no en '{src.project.slug}'.",
+                        f"Usá el código del proyecto '{src.project.slug}' o un external_key "
+                        f"del mismo proyecto. El código existe en: {slugs}.",
+                    )
+                ],
+            )
         return Result(
             ok=False,
             violations=[
-                _v("E_UNKNOWN_TICKET", "to", f"No existe el ticket '{to_ref}'.", "Usá su code (OS-003) o su external_key.")
+                _v(
+                    "E_UNKNOWN_TICKET",
+                    "to",
+                    f"No existe el ticket '{to_ref}'.",
+                    "Usá su code (OS-003) o su external_key.",
+                )
             ],
         )
     if src.id == dst.id:
         return Result(
             ok=False,
-            violations=[_v("E_SELF_LINK", "to", "Un ticket no puede vincularse consigo mismo.", "Elegí otro ticket.")],
+            violations=[
+                _v(
+                    "E_SELF_LINK",
+                    "to",
+                    "Un ticket no puede vincularse consigo mismo.",
+                    "Elegí otro ticket.",
+                )
+            ],
         )
     if kind == LinkKind.BLOCKS and _would_cycle(db, src.project_id, src.id, dst.id):
         return Result(
@@ -624,6 +975,9 @@ def review_ticket(
     if ticket is None:
         assert error is not None
         return error
+    denied = _scope_denied(ticket, principal)
+    if denied is not None:
+        return denied
     if verdict == ReviewVerdict.CHANGES_REQUESTED and not (note or "").strip():
         return Result(
             ok=False,
@@ -657,6 +1011,109 @@ def review_ticket(
             "current_content_hash": ticket.content_hash,
         },
     )
+
+
+def _actor_label(user: User | None, agent: Agent | None) -> str:
+    if agent is not None:
+        return agent.name
+    if user is not None:
+        return user.name
+    return "?"
+
+
+def ticket_activity(
+    db: OrmSession, ticket: Ticket, limit: int = 50, offset: int = 0
+) -> dict[str, Any]:
+    """Conversación + historial, en una sola línea de tiempo.
+
+    Es lo que le permite a un agente nuevo retomar el caso sin leer el chat
+    anterior: comentarios y eventos, con autor y fecha.
+    """
+    comments = repo.get_comments(db, ticket.id)
+    events = repo.get_events(db, ticket.id, limit=200, offset=0)
+    items: list[dict[str, Any]] = []
+    for comment in comments:
+        items.append(
+            {
+                "kind": "comment",
+                "at": comment.created_at.isoformat() if comment.created_at else None,
+                "author": _actor_label(comment.author_user, comment.author_agent),
+                "author_kind": "agent" if comment.author_agent_id else "user",
+                "body": comment.body,
+            }
+        )
+    for event in events:
+        items.append(
+            {
+                "kind": "event",
+                "at": event.created_at.isoformat() if event.created_at else None,
+                "author": _actor_label(event.actor_user, event.actor_agent),
+                "author_kind": "agent" if event.actor_agent_id else "user",
+                "event": event.kind,
+                "payload": event.payload,
+            }
+        )
+    items.sort(key=lambda item: (item["at"] or "", item["kind"]))
+    window = items[offset : offset + limit]
+    return {
+        "code": ticket.code,
+        "project": ticket.project.slug,
+        "count": len(window),
+        "total": len(items),
+        "next_offset": offset + limit if offset + limit < len(items) else None,
+        "items": window,
+    }
+
+
+def workflow_for(ticket: Ticket, principal: Principal) -> dict[str, Any]:
+    """Qué puede hacer este actor con este ticket, y qué le falta.
+
+    Los datos se calculan en el servicio: el adaptador MCP no decide reglas.
+    """
+    status = TicketStatus(ticket.status)
+    targets = allowed_targets(status)
+    missing = missing_for_ready(ticket)
+    in_scope = principal.can_write_project(ticket.project.slug)
+    can_mutate = in_scope and _can_mutate(ticket, principal)
+    actions: list[dict[str, Any]] = []
+    for target in targets:
+        if target == str(TicketStatus.READY):
+            if missing:
+                actions.append(
+                    {
+                        "action": "set_status",
+                        "target": "ready",
+                        "available": False,
+                        "reason": "Faltan: " + ", ".join(m["field"] for m in missing),
+                    }
+                )
+                continue
+            actions.append({"action": "set_status", "target": "ready", "available": True})
+        elif target == str(TicketStatus.WONT):
+            actions.append(
+                {
+                    "action": "set_status",
+                    "target": "wont",
+                    "available": True,
+                    "reason": "Exige una nota con el motivo.",
+                }
+            )
+        else:
+            actions.append({"action": "set_status", "target": target, "available": True})
+    return {
+        "status": status,
+        "allowed_transitions": targets,
+        "missing_for_ready": missing,
+        "capabilities": {
+            "in_scope": in_scope,
+            "can_mutate": can_mutate,
+            "can_comment": in_scope,
+            "can_review": in_scope,
+            "can_close": can_transition(status, TicketStatus.DONE),
+        },
+        "actions": actions,
+        "contract": "opensupport://workflow/support",
+    }
 
 
 def review_summary(db: OrmSession, ticket: Ticket) -> dict[str, Any]:

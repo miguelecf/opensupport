@@ -107,7 +107,9 @@ def test_lint_draft_reports_violations(session: OrmSession) -> None:  # noqa: AN
 def test_batch_is_partial(session: OrmSession, principal) -> None:  # noqa: ANN001
     good = make_valid_draft(external_key="b-good")
     bad = make_invalid_draft(external_key="b-bad")
-    results = service.create_tickets_batch(session, principal, [good, bad, good.model_copy(update={"external_key": "b-good2"})])
+    results = service.create_tickets_batch(
+        session, principal, [good, bad, good.model_copy(update={"external_key": "b-good2"})]
+    )
     statuses = [r.ok for r in results]
     assert statuses == [True, False, True]
     assert results[1].data["index"] == 1
@@ -132,7 +134,10 @@ def test_close_with_evidence_sets_done(session: OrmSession, principal) -> None: 
     code = created.data["code"]
     service.set_status(session, principal, code, "in_progress")
     result = service.close_ticket(
-        session, principal, code, {"pr": "https://github.com/x/y/pull/1", "commands": ["uv run pytest"]}
+        session,
+        principal,
+        code,
+        {"pr": "https://github.com/x/y/pull/1", "commands": ["uv run pytest"]},
     )
     assert result.ok
     assert result.data["status"] == TicketStatus.DONE
@@ -158,7 +163,9 @@ def test_optimistic_lock_conflict(session: OrmSession, principal) -> None:  # no
     created = service.create_ticket(session, principal, make_valid_draft())
     code = created.data["code"]
     stale = "2000-01-01T00:00:00+00:00"
-    result = service.update_ticket(session, principal, code, TicketPatch(title="Nuevo título"), stale)
+    result = service.update_ticket(
+        session, principal, code, TicketPatch(title="Nuevo título"), stale
+    )
     assert not result.ok
     assert "E_CONFLICT" in codes(result)
 
@@ -170,7 +177,15 @@ def test_update_changes_content_hash(session: OrmSession, principal) -> None:  #
     created = service.create_ticket(session, principal, make_valid_draft())
     code = created.data["code"]
     before = get_ticket_by_code(session, code).content_hash
-    service.update_ticket(session, principal, code, TicketPatch(summary="Un resumen totalmente nuevo con suficiente largo para pasar el mínimo."), None)
+    service.update_ticket(
+        session,
+        principal,
+        code,
+        TicketPatch(
+            summary="Un resumen totalmente nuevo, con suficiente largo para no romper el contrato del ticket."
+        ),
+        None,
+    )
     after = get_ticket_by_code(session, code).content_hash
     assert before != after
 
@@ -236,7 +251,9 @@ def test_not_your_ticket_on_update(session: OrmSession, principal, reader_princi
     from app.tickets.schema import TicketPatch
 
     created = service.create_ticket(session, principal, make_valid_draft())
-    result = service.update_ticket(session, reader_principal, created.data["code"], TicketPatch(title="hack"), None)
+    result = service.update_ticket(
+        session, reader_principal, created.data["code"], TicketPatch(title="hack"), None
+    )
     assert not result.ok
     assert "E_NOT_YOUR_TICKET" in codes(result)
 
@@ -257,9 +274,13 @@ def test_read_is_not_restricted(session: OrmSession, principal, reader_principal
 def test_link_cycle_rejected(session: OrmSession, principal) -> None:  # noqa: ANN001
     a = service.create_ticket(session, principal, make_valid_draft(external_key="a"))
     b = service.create_ticket(session, principal, make_valid_draft(external_key="b"))
-    first = service.link_tickets(session, principal, a.data["code"], b.data["code"], LinkKind.BLOCKS)
+    first = service.link_tickets(
+        session, principal, a.data["code"], b.data["code"], LinkKind.BLOCKS
+    )
     assert first.ok
-    second = service.link_tickets(session, principal, b.data["code"], a.data["code"], LinkKind.BLOCKS)
+    second = service.link_tickets(
+        session, principal, b.data["code"], a.data["code"], LinkKind.BLOCKS
+    )
     assert not second.ok
     assert "E_DEPS_CYCLE" in codes(second)
 
@@ -268,13 +289,17 @@ def test_relates_to_does_not_cycle_check(session: OrmSession, principal) -> None
     a = service.create_ticket(session, principal, make_valid_draft(external_key="a"))
     b = service.create_ticket(session, principal, make_valid_draft(external_key="b"))
     service.link_tickets(session, principal, a.data["code"], b.data["code"], LinkKind.BLOCKS)
-    back = service.link_tickets(session, principal, b.data["code"], a.data["code"], LinkKind.RELATES_TO)
+    back = service.link_tickets(
+        session, principal, b.data["code"], a.data["code"], LinkKind.RELATES_TO
+    )
     assert back.ok
 
 
 def test_self_link_rejected(session: OrmSession, principal) -> None:  # noqa: ANN001
     a = service.create_ticket(session, principal, make_valid_draft())
-    result = service.link_tickets(session, principal, a.data["code"], a.data["code"], LinkKind.BLOCKS)
+    result = service.link_tickets(
+        session, principal, a.data["code"], a.data["code"], LinkKind.BLOCKS
+    )
     assert not result.ok
     assert "E_SELF_LINK" in codes(result)
 
@@ -295,14 +320,18 @@ def test_review_does_not_change_status(session: OrmSession, principal) -> None: 
     from app.tickets.repository import get_ticket_by_code
 
     created = service.create_ticket(session, principal, make_valid_draft())
-    result = service.review_ticket(session, principal, created.data["code"], "approved", "Está bien")
+    result = service.review_ticket(
+        session, principal, created.data["code"], "approved", "Está bien"
+    )
     assert result.ok
     assert get_ticket_by_code(session, created.data["code"]).status == TicketStatus.READY
 
 
 def test_changes_requested_requires_note(session: OrmSession, principal) -> None:  # noqa: ANN001
     created = service.create_ticket(session, principal, make_valid_draft())
-    result = service.review_ticket(session, principal, created.data["code"], "changes_requested", None)
+    result = service.review_ticket(
+        session, principal, created.data["code"], "changes_requested", None
+    )
     assert not result.ok
     assert "E_REVIEW_NOTE_REQUIRED" in codes(result)
 
@@ -324,7 +353,15 @@ def test_stale_review_detected_after_edit(session: OrmSession, principal) -> Non
     created = service.create_ticket(session, principal, make_valid_draft())
     code = created.data["code"]
     service.review_ticket(session, principal, code, "changes_requested", "Falta algo")
-    service.update_ticket(session, principal, code, TicketPatch(summary="Resumen corregido que cambia el hash del ticket por completo."), None)
+    service.update_ticket(
+        session,
+        principal,
+        code,
+        TicketPatch(
+            summary="Resumen corregido que cambia el hash del ticket por completo, con largo suficiente."
+        ),
+        None,
+    )
     summary = service.review_summary(session, get_ticket_by_code(session, code))
     assert summary["needs_review"] is True
     assert summary["historical_count"] == 1

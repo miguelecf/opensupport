@@ -41,7 +41,9 @@ def _apply_pragmas(dbapi_connection: object, _record: object) -> None:
                 mode,
             )
     except Exception:
-        logger.warning("No se pudo activar WAL; continúo con el journal por defecto.", exc_info=True)
+        logger.warning(
+            "No se pudo activar WAL; continúo con el journal por defecto.", exc_info=True
+        )
     for pragma in ("foreign_keys = ON", "busy_timeout = 5000", "synchronous = NORMAL"):
         cur.execute(f"PRAGMA {pragma}")
     cur.close()
@@ -50,11 +52,16 @@ def _apply_pragmas(dbapi_connection: object, _record: object) -> None:
 def get_engine() -> Engine:
     global _engine, _sessionmaker
     if _engine is None:
-        if settings.database_url.startswith("sqlite:///") and ":memory:" not in settings.database_url:
+        if (
+            settings.database_url.startswith("sqlite:///")
+            and ":memory:" not in settings.database_url
+        ):
             settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         _engine = create_engine(
             settings.database_url,
-            connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+            connect_args={"check_same_thread": False}
+            if settings.database_url.startswith("sqlite")
+            else {},
             future=True,
         )
         if settings.database_url.startswith("sqlite"):
@@ -81,6 +88,26 @@ def session_scope() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def ensure_write_transaction(db: Session) -> None:
+    """Asegura que haya una transacción física antes de abrir un savepoint.
+
+    SQLite con el driver legacy no abre transacción con un SELECT: solo antes
+    de un INSERT/UPDATE/DELETE. Si el primer statement de la transacción es un
+    SAVEPOINT, ese savepoint es la transacción más externa y su RELEASE la
+    confirma: el lote quedaría confirmado a mitad de camino y un rollback
+    posterior no podría deshacer lo ya confirmado.
+
+    Con un BEGIN explícito, el savepoint queda anidado y RELEASE no confirma
+    nada: el rollback del lote sigue teniendo efecto.
+    """
+    raw = db.connection().connection
+    driver = getattr(raw, "driver_connection", raw)
+    in_transaction = getattr(driver, "in_transaction", None)
+    if in_transaction is None or in_transaction:
+        return
+    driver.execute("BEGIN")
 
 
 def db_is_ready() -> tuple[bool, str]:
