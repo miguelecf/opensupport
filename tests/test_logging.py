@@ -80,6 +80,22 @@ def test_real_message_with_args_is_redacted() -> None:
     assert "b" * 32 not in record.getMessage()
 
 
+def test_tuple_args_are_preserved_for_access_logs() -> None:
+    """uvicorn.access desempaqueta args como tupla: no hay que aplanarlos."""
+    record = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1", "GET", "/readyz", "1.1", 200),
+        exc_info=None,
+    )
+    RedactingFilter().filter(record)
+    assert record.args == ("127.0.0.1:1", "GET", "/readyz", "1.1", 200)
+    assert record.getMessage() == '127.0.0.1:1 - "GET /readyz HTTP/1.1" 200'
+
+
 def test_filter_lands_on_handlers_not_loggers() -> None:
     """Los filtros de logger no se heredan: tiene que estar en los handlers."""
     from app.logging_setup import apply_to, configure_logging

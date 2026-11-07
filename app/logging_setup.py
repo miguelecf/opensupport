@@ -36,8 +36,23 @@ class RedactingFilter(logging.Filter):
     """Limpia headers sensibles y tokens sueltos antes de que se emitan."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = redact_text(record.getMessage() if record.args else str(record.msg))
-        record.args = ()
+        # El mensaje se redacta tal cual: si es una plantilla con %s, el token
+        # entero vive en los args y se redacta ahí. No aplanamos msg+args ni
+        # vaciamos `args`: uvicorn.access espera una tupla y su formatter la
+        # desempaqueta — aplanarla rompe el access log con un ValueError.
+        if isinstance(record.msg, str):
+            record.msg = redact_text(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    key: (redact_text(value) if isinstance(value, str) else value)
+                    for key, value in record.args.items()
+                }
+            elif isinstance(record.args, tuple):
+                record.args = tuple(
+                    redact_text(value) if isinstance(value, str) else value
+                    for value in record.args
+                )
 
         headers = getattr(record, "headers", None)
         if isinstance(headers, dict):
